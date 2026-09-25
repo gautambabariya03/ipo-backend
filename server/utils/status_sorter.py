@@ -6,66 +6,84 @@ MONTH_MAP = {
     'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
 }
 
-def parse_ipo_date(date_str, default_year=2026):
-    """Parses date like '24-Sep', '24 Sep', '24-Sep-2026' into a comparable datetime object."""
-    if not date_str or date_str == "--":
+def parse_date_flexible(val_str, default_year=2026):
+    """तारीख जैसे '24-Sep', '29 Sep', '24-Sep-2026' को डेट ऑब्जेक्ट में बदलता है"""
+    if not val_str or val_str.strip() in ["--", "", "Live"]:
         return None
-    
-    clean_s = re.sub(r'[^a-zA-Z0-9]', ' ', date_str).strip()
-    parts = clean_s.split()
-    
+
+    clean = val_str.strip().replace('/', '-').replace(' ', '-')
+    parts = [p for p in clean.split('-') if p]
+
     if len(parts) >= 2:
         try:
             day = int(parts[0])
-            mon_txt = parts[1][:3].upper()
-            month = MONTH_MAP.get(mon_txt)
-            year = int(parts[2]) if len(parts) >= 3 and len(parts[2]) == 4 else default_year
-            if month:
-                return datetime(year, month, day).date()
+            mon_part = parts[1].upper()[:3]
+            
+            if mon_part in MONTH_MAP:
+                month = MONTH_MAP[mon_part]
+            elif parts[1].isdigit():
+                month = int(parts[1])
+            else:
+                return None
+
+            year = default_year
+            if len(parts) >= 3:
+                yr_num = int(parts[2])
+                year = 2000 + yr_num if yr_num < 100 else yr_num
+
+            return datetime(year, month, day).date()
         except Exception:
-            pass
+            return None
     return None
 
 def sort_and_assign_status(ipo_list):
-    """Sorts IPOs strictly into OPEN, UPCOMING, and CLOSED based on today's live calendar date."""
+    """
+    सख्त कैलेंडर नियम:
+    - 24 Sep से 29 Sep वाला IPO आज 25 Sep को सीधा OPEN में रहेगा।
+    - जो 25 Sep से पहले क्लोज हो चुका है, वह CLOSED में जाएगा।
+    - जो 25 Sep के बाद शुरू होगा, सिर्फ वही UPCOMING में जाएगा।
+    """
     ist = timezone(timedelta(hours=5, minutes=30))
     today = datetime.now(ist).date()
 
     for item in ipo_list:
         date_range = item.get("date_range", "")
-        raw_status = item.get("status", "OPEN")
+        raw_name = item.get("name", "").upper()
         
-        # Check if already tagged as listed/closed by explicit tags
-        if raw_status == "CLOSED" or "LISTED" in date_range.upper():
-            item["status"] = "CLOSED"
-            continue
-
         open_date = None
         close_date = None
 
-        # Parse date_range like "24 Sep - 28 Sep"
+        # तारीख अलग करें: जैसे "24 Sep - 29 Sep"
         if " - " in date_range:
             parts = date_range.split(" - ")
-            open_date = parse_ipo_date(parts[0])
-            close_date = parse_ipo_date(parts[1])
+            open_date = parse_date_flexible(parts[0])
+            close_date = parse_date_flexible(parts[1])
         elif date_range and date_range != "Live":
-            close_date = parse_ipo_date(date_range)
+            close_date = parse_date_flexible(date_range)
 
-        # STRICT DATE RULES:
-        if close_date:
-            if close_date < today:
-                item["status"] = "CLOSED"
-            elif open_date and open_date > today:
-                item["status"] = "UPCOMING"
-            else:
-                item["status"] = "OPEN"
-        elif open_date:
-            if open_date > today:
-                item["status"] = "UPCOMING"
-            else:
-                item["status"] = "OPEN"
+        # 1. सबसे पहले चेक: क्या IPO पहले ही बंद हो चुका है?
+        if close_date and close_date < today:
+            item["status"] = "CLOSED"
+
+        # 2. क्या IPO भविष्य में शुरू होगा? (आज के बाद)
+        elif open_date and open_date > today:
+            item["status"] = "UPCOMING"
+
+        # 3. क्या IPO शुरू हो चुका है और आज या आगे तक चलेगा? (जैसे 24 से 29 Sep)
+        elif open_date and open_date <= today and (close_date is None or close_date >= today):
+            item["status"] = "OPEN"
+
+        # 4. अगर सिर्फ क्लोज डेट है और वह आज या आगे की है
+        elif close_date and close_date >= today:
+            item["status"] = "OPEN"
+
+        # 5. अगर तारीख न मिले, तो नाम के टैग से पहचानें
         else:
-            # Fallback if no dates exist
-            item["status"] = raw_status
+            if any(w in raw_name for w in ["LISTED", "CLOSED", "(L)"]):
+                item["status"] = "CLOSED"
+            elif any(w in raw_name for w in ["UPCOMING", "PRE-APPLY", "(U)"]):
+                item["status"] = "UPCOMING"
+            else:
+                item["status"] = "OPEN"
 
     return ipo_list
