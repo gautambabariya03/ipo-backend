@@ -1,6 +1,8 @@
 import sys
 import os
 import asyncio
+import time
+import json
 import json
 from typing import List, Optional
 from datetime import datetime
@@ -43,6 +45,70 @@ class AllotmentBatchRequest(BaseModel):
 # ----------------- In-memory State & Cache -----------------
 # ----------------- Persistent Storage -----------------
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipos_persistent.json")
+
+def load_from_disk():
+    global CACHED_IPOS
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                CACHED_IPOS = json.load(f)
+                print(f"Loaded {len(CACHED_IPOS)} IPOs from persistent storage.")
+        except Exception as e:
+            print(f"Disk load error: {e}")
+            # ----------------- Persistent Storage & Rate-Limited Cache -----------------
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipos_persistent.json")
+LAST_SCRAPE_TIME = 0
+LAST_SYNC_STATUS = {"status": "Never Synced", "time": "", "error": None}
+SCRAPE_TTL_SECONDS = 60  # Minimum 60 seconds gap between live scrapes
+
+def load_from_disk():
+    global CACHED_IPOS
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                CACHED_IPOS = json.load(f)
+                print(f"Loaded {len(CACHED_IPOS)} IPOs from persistent storage.")
+        except Exception as e:
+            print(f"Disk load error: {e}")
+            CACHED_IPOS = []
+
+def save_to_disk():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(CACHED_IPOS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Disk save error: {e}")
+
+def merge_scraped_data(new_items):
+    global CACHED_IPOS
+    existing_map = {item["id"]: item for item in CACHED_IPOS}
+    for item in new_items:
+        existing_map[item["id"]] = item
+    CACHED_IPOS = list(existing_map.values())
+    save_to_disk()
+
+CACHED_IPOS = []
+
+def save_to_disk():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(CACHED_IPOS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Disk save error: {e}")
+
+def merge_scraped_data(new_items):
+    global CACHED_IPOS
+    existing_map = {item["id"]: item for item in CACHED_IPOS}
+    for item in new_items:
+        existing_map[item["id"]] = item
+    CACHED_IPOS = list(existing_map.values())
+    save_to_disk()
+
+# ----------------- Persistent Storage & Rate-Limited Cache -----------------
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipos_persistent.json")
+LAST_SCRAPE_TIME = 0
+LAST_SYNC_STATUS = {"status": "Never Synced", "time": "", "error": None}
+SCRAPE_TTL_SECONDS = 60  # Minimum 60 seconds gap between live scrapes
 
 def load_from_disk():
     global CACHED_IPOS
@@ -104,8 +170,10 @@ def root():
 
 @app.get("/api/ipos/live")
 async def get_live_ipos(force_refresh: bool = Query(False, description="Set True for manual pull-to-refresh")):
-    global CACHED_IPOS
-    if force_refresh or not CACHED_IPOS:
+    global CACHED_IPOS, LAST_SCRAPE_TIME
+    time_since_last = time.time() - LAST_SCRAPE_TIME
+    # Agar 60s se zyada ho gaya ya force_refresh hai ya cache khali hai toh naya live scrape hoga
+    if force_refresh or not CACHED_IPOS or time_since_last > SCRAPE_TTL_SECONDS:
         await sync_data_safe()
     return CACHED_IPOS
 
