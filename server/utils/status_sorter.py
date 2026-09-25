@@ -1,19 +1,5 @@
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 import re
 from datetime import datetime, timezone, timedelta
-from scrapers.gmp_scraper import fetch_live_gmp
-
-app = FastAPI(title="IPO GMP Tracker API", version="2.0.0")
-
-# Enable CORS for Flutter/React-Native Mobile App
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 MONTH_MAP = {
     'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
@@ -21,11 +7,13 @@ MONTH_MAP = {
 }
 
 def parse_ipo_date(date_str, default_year=2026):
-    """Parses text dates like '24-Sep', '28 Sep', '24-Sep-2026' into date object."""
+    """Parses date like '24-Sep', '24 Sep', '24-Sep-2026' into a comparable datetime object."""
     if not date_str or date_str == "--":
         return None
+    
     clean_s = re.sub(r'[^a-zA-Z0-9]', ' ', date_str).strip()
     parts = clean_s.split()
+    
     if len(parts) >= 2:
         try:
             day = int(parts[0])
@@ -38,15 +26,16 @@ def parse_ipo_date(date_str, default_year=2026):
             pass
     return None
 
-def apply_date_based_status(ipo_list):
-    """Sorts IPOs strictly into OPEN, UPCOMING, and CLOSED using today's calendar date."""
+def sort_and_assign_status(ipo_list):
+    """Sorts IPOs strictly into OPEN, UPCOMING, and CLOSED based on today's live calendar date."""
     ist = timezone(timedelta(hours=5, minutes=30))
     today = datetime.now(ist).date()
 
     for item in ipo_list:
         date_range = item.get("date_range", "")
         raw_status = item.get("status", "OPEN")
-
+        
+        # Check if already tagged as listed/closed by explicit tags
         if raw_status == "CLOSED" or "LISTED" in date_range.upper():
             item["status"] = "CLOSED"
             continue
@@ -54,6 +43,7 @@ def apply_date_based_status(ipo_list):
         open_date = None
         close_date = None
 
+        # Parse date_range like "24 Sep - 28 Sep"
         if " - " in date_range:
             parts = date_range.split(" - ")
             open_date = parse_ipo_date(parts[0])
@@ -61,7 +51,7 @@ def apply_date_based_status(ipo_list):
         elif date_range and date_range != "Live":
             close_date = parse_ipo_date(date_range)
 
-        # STRICT CALENDAR RULES
+        # STRICT DATE RULES:
         if close_date:
             if close_date < today:
                 item["status"] = "CLOSED"
@@ -75,27 +65,7 @@ def apply_date_based_status(ipo_list):
             else:
                 item["status"] = "OPEN"
         else:
+            # Fallback if no dates exist
             item["status"] = raw_status
 
     return ipo_list
-
-@app.get("/")
-def home():
-    return {"status": "online", "message": "Live IPO GMP API Running"}
-
-@app.get("/api/ipos/live")
-def get_live_ipos(force_refresh: bool = False):
-    # 1. Scrape live table data
-    raw_data = fetch_live_gmp()
-    
-    # 2. Automatically apply strict OPEN/UPCOMING/CLOSED calendar filter
-    sorted_data = apply_date_based_status(raw_data)
-    
-    return sorted_data
-
-@app.get("/api/ipos/{status}")
-def get_ipos_by_status(status: str):
-    raw_data = fetch_live_gmp()
-    sorted_data = apply_date_based_status(raw_data)
-    status_upper = status.upper()
-    return [ipo for ipo in sorted_data if ipo.get("status") == status_upper]
