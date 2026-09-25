@@ -6,7 +6,6 @@ from datetime import datetime
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
     "Cache-Control": "no-cache",
     "Pragma": "no-cache"
 }
@@ -19,8 +18,8 @@ def parse_num(val_str):
     return float(nums[0]) if nums else 0.0
 
 def fetch_live_gmp():
-    # Cache-busting timestamp parameter to always get fresh data from web
-    url = f"https://www.investorgain.com/report/ipo-gmp-live/331/?_t={int(datetime.now().timestamp())}"
+    # Cache bypass timestamp
+    url = f"https://www.investorgain.com/report/ipo-gmp-live/331/?v={int(datetime.now().timestamp())}"
     scraped_list = []
     seen_ids = set()
 
@@ -34,14 +33,14 @@ def fetch_live_gmp():
                 rows = table.find_all("tr")
                 for row in rows[1:]:
                     cols = row.find_all("td")
-                    if len(cols) < 6:
+                    if len(cols) < 5:
                         continue
 
                     raw_name = clean_txt(cols[0].text)
                     if not raw_name or len(raw_name) < 3 or "IPO" not in raw_name.upper():
                         continue
 
-                    # IPO Name Clean
+                    # Clean Name & Category
                     clean_name = re.sub(r'(\(?(BSE\s+|NSE\s+)?SME\)?|IPO[A-Z@\d\.\s\(\)%]*$)', '', raw_name, flags=re.IGNORECASE).strip()
                     clean_name = re.sub(r'\[email&#160;protected\]', '', clean_name).strip()
                     c_id = re.sub(r'[^a-zA-Z0-9]', '-', clean_name.lower())[:35].strip('-')
@@ -51,42 +50,38 @@ def fetch_live_gmp():
 
                     is_sme = "SME" in raw_name.upper()
 
-                    # Live GMP value
+                    # Live GMP
                     gmp_text = clean_txt(cols[1].text)
                     gmp_val = parse_num(gmp_text)
 
-                    # Price & Base Price
+                    # Price
                     price_text = clean_txt(cols[2].text)
                     base_price = parse_num(price_text)
 
-                    # GMP %
-                    gmp_prcnt_text = clean_txt(cols[3].text) if len(cols) > 3 else ""
-                    gmp_percent = parse_num(gmp_prcnt_text)
-                    if gmp_percent == 0.0 and base_price > 0:
-                        gmp_percent = round((gmp_val / base_price) * 100, 2)
-
-                    # Dynamic Real Updated Time directly from Table column
-                    # Usually col 6 or 7 contains last updated time on site
-                    last_updated_live = ""
+                    # Dynamic Timestamp: Website ke column se ya Live Current Time
+                    time_found = ""
                     for c in cols:
                         txt = clean_txt(c.text)
-                        if re.search(r'\d{1,2}\s+[A-Za-z]{3}|\d{1,2}:\d{2}', txt):
-                            if any(m in txt for m in ["AM", "PM", "mins", "hours", "ago", "Today"]):
-                                last_updated_live = txt
-                                break
-                    if not last_updated_live:
-                        last_updated_live = datetime.now().strftime("%d %b, %I:%M %p")
+                        if any(k in txt for k in ["AM", "PM", "ago", "mins", "hours", "Today"]):
+                            time_found = txt
+                            break
+                    
+                    current_time_str = datetime.now().strftime("%d %b, %I:%M %p")
+                    last_heard_time = time_found if time_found else current_time_str
 
                     # Lot Size
                     lot_text = ""
                     for c in cols[3:]:
                         t = clean_txt(c.text)
-                        if t.isdigit() and int(t) >= 10:
+                        if t.isdigit() and int(t) >= 8:
                             lot_text = t
                             break
                     lot_size = int(lot_text) if lot_text else (1200 if is_sme else 50)
 
-                    # Dynamic Status Detection
+                    # GMP %
+                    gmp_percent = round((gmp_val / base_price) * 100, 2) if base_price > 0 else 0.0
+
+                    # Status
                     row_txt = row.text.upper()
                     if "LISTED" in row_txt or "CLOSED" in row_txt:
                         status = "CLOSED"
@@ -105,7 +100,7 @@ def fetch_live_gmp():
                         "issue_size": "--",
                         "gmp": gmp_val,
                         "gmp_percentage": gmp_percent,
-                        "last_heard": last_updated_live,
+                        "last_heard": last_heard_time,
                         "allotment_date": "--",
                         "listing_date": "--",
                         "retail_profit": round(gmp_val * lot_size, 2),
@@ -119,6 +114,6 @@ def fetch_live_gmp():
                     })
                     seen_ids.add(c_id)
     except Exception as e:
-        print(f"Scraper Live Error: {e}")
+        print(f"Scraper Error: {e}")
 
     return scraped_list
