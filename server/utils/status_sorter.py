@@ -1,59 +1,49 @@
 import re
+from datetime import datetime, timezone, timedelta
 
-def clean_pure_date(date_str):
-    """Date ke beech se GMP, %, aur faltu text hatakar sirf saaf date rakhta hai"""
-    if not date_str or date_str == "Live" or date_str == "--":
-        return date_str
-    
-    # GMP, %, ₹ aur numbers with % ko saaf karein
-    cleaned = re.sub(r'₹?\s*[-+]?\d+(?:\.\d+)?\s*%', '', date_str)
-    cleaned = re.sub(r'₹\s*[-+]?\d+(?:\.\d+)?', '', cleaned)
-    cleaned = re.sub(r'\[.*?\]|\(.*?\)', '', cleaned)
-    
-    # Sirf Dates pakdein (jaise '23-Sep', '25 Sep')
-    dates = re.findall(r'\b\d{1,2}(?:st|nd|rd|th)?[\s\-]*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:[\s\-]*\d{2,4})?\b', cleaned, re.IGNORECASE)
-    
-    if len(dates) >= 2:
-        return f"{dates[0]} - {dates[1]}"
-    elif len(dates) == 1:
-        return dates[0]
-    
-    return date_str.strip()
+MONTH_MAP = {
+    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+}
+
+def parse_date(date_str, default_year=2026):
+    if not date_str or date_str in ["--", "", "Live", "Date TBA"]:
+        return None
+    parts = re.split(r'[\s\-]+', date_str.strip())
+    if len(parts) >= 2:
+        try:
+            day = int(parts[0])
+            mon = parts[1].upper()[:3]
+            if mon in MONTH_MAP:
+                return datetime(default_year, MONTH_MAP[mon], day).date()
+        except Exception:
+            return None
+    return None
 
 def sort_and_assign_status(ipo_list):
-    """
-    Sirf 3 Status:
-    - O -> OPEN
-    - U -> UPCOMING
-    - C ya L -> CLOSED
-    Aur Date Range ko bilkul saaf rakhna.
-    """
+    ist = timezone(timedelta(hours=5, minutes=30))
+    today = datetime.now(ist).date()
+
     for item in ipo_list:
-        raw_name = item.get("name", "").strip()
-        name_upper = raw_name.upper()
+        open_d = parse_date(item.get("open_raw", ""))
+        close_d = parse_date(item.get("close_raw", ""))
+        raw_cell = item.get("raw_tag", "").upper()
 
-        # 1. CLOSED (C ya Listed L)
-        if name_upper.endswith("C") or name_upper.endswith("L") or "CLOSED" in name_upper or "LISTED" in name_upper:
+        # 1. Closed: जो आज से पहले बंद हो चुके हैं
+        if close_d and close_d < today:
             item["status"] = "CLOSED"
-
-        # 2. UPCOMING (U)
-        elif name_upper.endswith("U") or "UPCOMING" in name_upper:
+        # 2. Upcoming: जो आज के बाद शुरू होंगे
+        elif open_d and open_d > today:
             item["status"] = "UPCOMING"
-
-        # 3. OPEN (O)
-        elif name_upper.endswith("O") or "OPEN" in name_upper:
+        # 3. Open: जो आज चल रहे हैं (24-29, 25-29 आदि)
+        elif (open_d and open_d <= today and (close_d is None or close_d >= today)) or (close_d and close_d >= today):
             item["status"] = "OPEN"
-
         else:
-            item["status"] = "CLOSED"
-
-        # Date Range se GMP ka kachra saaf karein (Sirf Date bachegi)
-        item["date_range"] = clean_pure_date(item.get("date_range", ""))
-
-        # App UI ke liye naam saaf karna
-        clean_name = re.sub(r'\[email&#160;protected\]', '', raw_name, flags=re.IGNORECASE)
-        clean_name = re.sub(r'L@[\d\.\(\)\%\+\-]+', '', clean_name)
-        clean_name = re.sub(r'(\(?(BSE\s+|NSE\s+)?SME\)?[UOCL]*|IPO[UOCL]*$)', '', clean_name, flags=re.IGNORECASE).strip()
-        item["name"] = clean_name.strip(' -–@')
+            if raw_cell.endswith("U") or "UPCOMING" in raw_cell:
+                item["status"] = "UPCOMING"
+            elif raw_cell.endswith("C") or raw_cell.endswith("L") or "LISTED" in raw_cell or "CLOSED" in raw_cell:
+                item["status"] = "CLOSED"
+            else:
+                item["status"] = "OPEN"
 
     return ipo_list
