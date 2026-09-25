@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -33,14 +33,14 @@ def fetch_live_gmp():
                 rows = table.find_all("tr")
                 for row in rows[1:]:
                     cols = row.find_all("td")
-                    if len(cols) < 4:
+                    if len(cols) < 5:
                         continue
 
-                    # 1. Clean Name
                     raw_name = clean_txt(cols[0].text)
-                    if not raw_name or len(raw_name) < 2 or "GMP" in raw_name.upper() and len(raw_name) < 5:
+                    if not raw_name or len(raw_name) < 2 or ("GMP" in raw_name.upper() and len(raw_name) < 6):
                         continue
 
+                    # Clean Name
                     clean_name = re.sub(r'\[email&#160;protected\]|\[email\s*protected\]', '', raw_name, flags=re.IGNORECASE)
                     clean_name = re.sub(r'\([+-]?\d+(?:\.\d+)?%\)', '', clean_name)
                     clean_name = re.sub(r'(\(?(BSE\s+|NSE\s+)?SME\)?|IPO[A-Z@\d\.\s\(\)%]*$)', '', clean_name, flags=re.IGNORECASE).strip()
@@ -53,61 +53,55 @@ def fetch_live_gmp():
                     if not c_id or c_id in seen_ids:
                         continue
 
-                    is_sme = "SME" in raw_name.upper()
+                    # Category Check (SME vs MAINBOARD)
+                    is_sme = any(k in raw_name.upper() for k in ["SME", "NSE SME", "BSE SME"])
 
-                    # 2. Extract Numbers Across Columns
-                    all_col_texts = [clean_txt(c.text) for c in cols[1:]]
-                    
-                    # Extract GMP (Usually the first numeric value or with + / -)
-                    gmp_val = 0.0
-                    gmp_found = False
-                    for txt in all_col_texts[:3]:
-                        if any(char in txt for char in ["🔥", "⭐", "★"]):
-                            continue
-                        if re.search(r'[-+]?\d+', txt):
-                            gmp_val = parse_num(txt)
-                            gmp_found = True
-                            break
+                    # Extract all text cells without fire icons
+                    texts = [clean_txt(c.text) for c in cols[1:]]
+                    val_texts = [t for t in texts if not any(ch in t for ch in ["🔥", "⭐", "★"])]
 
-                    # Extract Price & Estimated GMP %
+                    # GMP
+                    gmp_val = parse_num(val_texts[0]) if len(val_texts) > 0 else 0.0
+
+                    # Price
                     base_price = 0.0
-                    for txt in all_col_texts:
-                        if any(char in txt for char in ["🔥", "⭐", "★", "%"]):
-                            continue
-                        num = parse_num(txt)
-                        # Price is typically distinct from GMP and > 10
-                        if num > 0 and num != gmp_val and num <= 25000:
-                            base_price = num
+                    price_str = "--"
+                    for t in val_texts[1:4]:
+                        val = parse_num(t)
+                        if val > 0 and "%" not in t:
+                            base_price = val
+                            price_str = f"₹{int(val) if val.is_integer() else val}"
                             break
 
-                    # Percentage extraction (check if column already has % sign)
+                    # Percentage
                     gmp_percent = 0.0
-                    for txt in all_col_texts:
-                        if "%" in txt:
-                            gmp_percent = abs(parse_num(txt))
+                    for t in val_texts:
+                        if "%" in t:
+                            gmp_percent = abs(parse_num(t))
                             break
                     if gmp_percent == 0.0 and base_price > 0 and gmp_val != 0:
                         gmp_percent = round((abs(gmp_val) / base_price) * 100, 2)
 
-                    # Extract Lot Size
+                    # Lot Size
                     lot_size = 0
-                    for txt in all_col_texts:
-                        if txt.isdigit():
-                            n = int(txt)
-                            if 10 <= n <= 10000 and n != int(base_price) and n != int(gmp_val):
-                                lot_size = n
+                    for t in val_texts[2:]:
+                        if t.isdigit():
+                            num = int(t)
+                            if 10 <= num <= 20000 and num != int(base_price):
+                                lot_size = num
                                 break
                     if lot_size == 0:
-                        lot_size = 1200 if is_sme else (50 if base_price > 0 else 100)
+                        lot_size = 1200 if is_sme else (50 if base_price > 50 else 100)
 
-                    # Timestamp (Live)
-                    current_time_str = datetime.now().strftime("%d %b, %I:%M %p")
+                    # IST Time (Without pytz)
+                    ist_time = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+                    last_heard_time = ist_time.strftime("%d %b, %I:%M %p")
 
-                    # Status
-                    row_txt = row.text.upper()
-                    if "LISTED" in row_txt or "CLOSED" in row_txt:
+                    # Status Handling
+                    row_full = row.text.upper()
+                    if any(w in row_full for w in ["LISTED", "CLOSED", "ALLOTTED"]):
                         status = "CLOSED"
-                    elif "PRE-APPLY" in row_txt or "UPCOMING" in row_txt:
+                    elif any(w in row_full for w in ["PRE-APPLY", "UPCOMING", "YET TO"]):
                         status = "UPCOMING"
                     else:
                         status = "OPEN"
@@ -117,12 +111,12 @@ def fetch_live_gmp():
                         "name": clean_name,
                         "category": "SME" if is_sme else "MAINBOARD",
                         "date_range": "Live",
-                        "price": f"₹{int(base_price) if base_price.is_integer() else base_price}" if base_price > 0 else "--",
+                        "price": price_str,
                         "lot_size": lot_size,
                         "issue_size": "--",
                         "gmp": gmp_val,
                         "gmp_percentage": gmp_percent,
-                        "last_heard": current_time_str,
+                        "last_heard": last_heard_time,
                         "allotment_date": "--",
                         "listing_date": "--",
                         "retail_profit": round(gmp_val * lot_size, 2),
