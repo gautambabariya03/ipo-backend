@@ -2,3 +2,11 @@ fastapi
 uvicorn
 requests
 beautifulsoup4
+fastapi==0.111.0
+uvicorn==0.30.1
+requests==2.32.3
+beautifulsoup4==4.12.3
+pydantic==2.7.4
+ddddocr
+requests
+pillow
