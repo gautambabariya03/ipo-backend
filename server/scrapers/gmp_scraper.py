@@ -1,8 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import re
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -54,26 +53,22 @@ def fetch_live_gmp():
                     if not c_id or c_id in seen_ids:
                         continue
 
-                    # Full Row Inspection
                     row_full_text = clean_txt(row.text).upper()
                     is_sme = "SME" in row_full_text or "NSE SME" in row_full_text or "BSE SME" in row_full_text
 
-                    # 2. Extract Price & GMP across table cells
-                    # Price: cell with highest likelihood of cutoff
+                    # 2. Extract Price, GMP and %
                     all_cells = [clean_txt(c.text) for c in cols[1:]]
                     
-                    # Detect GMP (contains ₹ or clean number in early column, but not price)
                     gmp_val = 0.0
                     base_price = 0.0
                     gmp_percent = 0.0
 
-                    # Check for percentage explicitly
+                    # Detect % directly if printed
                     for txt in all_cells:
                         if "%" in txt:
                             gmp_percent = abs(parse_num(txt))
                             break
 
-                    # Scan values
                     extracted_numbers = []
                     for txt in all_cells:
                         if any(ch in txt for ch in ["🔥", "⭐", "★"]):
@@ -83,20 +78,18 @@ def fetch_live_gmp():
                             extracted_numbers.append(n)
 
                     if len(extracted_numbers) >= 2:
-                        # In InvestorGain: Col 2 is GMP, Col 3 is Price
                         gmp_val = extracted_numbers[0]
                         base_price = extracted_numbers[1]
                     elif len(extracted_numbers) == 1:
                         base_price = extracted_numbers[0]
 
-                    # If percentage was found and base_price exists, recalculate GMP if missing
                     if gmp_val == 0.0 and gmp_percent > 0 and base_price > 0:
                         gmp_val = round((gmp_percent * base_price) / 100, 1)
 
                     if gmp_percent == 0.0 and base_price > 0 and gmp_val != 0:
                         gmp_percent = round((abs(gmp_val) / base_price) * 100, 2)
 
-                    # Extract Lot Size
+                    # Lot Size
                     lot_size = 0
                     for txt in all_cells[2:]:
                         if txt.isdigit():
@@ -107,12 +100,9 @@ def fetch_live_gmp():
                     if lot_size == 0:
                         lot_size = 1200 if is_sme else (50 if base_price > 50 else 100)
 
-                    # Current Indian Time
-                    try:
-                        tz_ist = pytz.timezone('Asia/Kolkata')
-                        now_ist = datetime.now(tz_ist)
-                    except Exception:
-                        now_ist = datetime.now()
+                    # Indian Time (IST) without external pytz
+                    ist_zone = timezone(timedelta(hours=5, minutes=30))
+                    now_ist = datetime.now(ist_zone)
                     last_heard_time = now_ist.strftime("%d %b, %I:%M %p")
 
                     # Status
