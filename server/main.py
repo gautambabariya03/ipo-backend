@@ -1,6 +1,7 @@
 import sys
 import os
 import asyncio
+import json
 from typing import List, Optional
 from datetime import datetime
 
@@ -40,6 +41,35 @@ class AllotmentBatchRequest(BaseModel):
     accounts: List[AccountItem]
 
 # ----------------- In-memory State & Cache -----------------
+# ----------------- Persistent Storage -----------------
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipos_persistent.json")
+
+def load_from_disk():
+    global CACHED_IPOS
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                CACHED_IPOS = json.load(f)
+                print(f"Loaded {len(CACHED_IPOS)} IPOs from persistent storage.")
+        except Exception as e:
+            print(f"Disk load error: {e}")
+            CACHED_IPOS = []
+
+def save_to_disk():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(CACHED_IPOS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Disk save error: {e}")
+
+def merge_scraped_data(new_items):
+    global CACHED_IPOS
+    existing_map = {item["id"]: item for item in CACHED_IPOS}
+    for item in new_items:
+        existing_map[item["id"]] = item
+    CACHED_IPOS = list(existing_map.values())
+    save_to_disk()
+
 CACHED_IPOS = []
 
 async def sync_data_safe():
@@ -48,7 +78,7 @@ async def sync_data_safe():
     try:
         data = await asyncio.to_thread(fetch_live_gmp)
         if data:
-            CACHED_IPOS = data
+            merge_scraped_data(data)
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Live Sync Complete: {len(CACHED_IPOS)} IPOs cached successfully.")
     except Exception as e:
         print(f"Background Sync Error: {e}")
@@ -62,6 +92,7 @@ async def auto_updater_task():
 
 @app.on_event("startup")
 async def on_startup():
+    load_from_disk()
     print("Initial server startup: Loading live IPO dataset...")
     await sync_data_safe()
     asyncio.create_task(auto_updater_task())
