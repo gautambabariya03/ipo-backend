@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "IPO GMP Tracker",
+    "slug": "ipo-gmp-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.gautambabariya.ipogmptracker",
+      "versionCode": 1
+    },
+    "extra": {
+      "eas": {
+        "projectId": "19b05fd8-d39a-4a70-bf4d-a5f5a3476838"
+      }
+    }
+  }
+}
