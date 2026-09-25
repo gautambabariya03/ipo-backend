@@ -35,7 +35,7 @@ def parse_date(d_str, default_year=2026):
             pass
     return None
 
-def process_ipo_lifecycle(ipo_list):
+def process_and_sort_ipos(ipo_list):
     ist = timezone(timedelta(hours=5, minutes=30))
     today = datetime.now(ist).date()
 
@@ -45,7 +45,7 @@ def process_ipo_lifecycle(ipo_list):
         listing_dt = parse_date(item.get("listing_date"))
         raw_name = item.get("name", "").upper()
 
-        # 1. Agar Listed ho chuka hai (listing date nikal gayi ya explicitly listed)
+        # 1. Listed IPOs
         if (listing_dt and listing_dt <= today) or "LISTED" in raw_name:
             item["status"] = "CLOSED"
             item["gmp"] = 0.0
@@ -54,17 +54,17 @@ def process_ipo_lifecycle(ipo_list):
             item["hni_profit"] = 0.0
             continue
 
-        # 2. Agar Close Date nikal chuki hai (Aaj se pehle)
+        # 2. Closed Date passed
         if close_dt and close_dt < today:
             item["status"] = "CLOSED"
             continue
 
-        # 3. Agar Open Date aage ki hai
+        # 3. Upcoming Date
         if open_dt and open_dt > today:
             item["status"] = "UPCOMING"
             continue
 
-        # 4. Agar aaj active hai
+        # 4. Currently Active
         if open_dt and close_dt:
             if open_dt <= today <= close_dt:
                 item["status"] = "OPEN"
@@ -72,6 +72,19 @@ def process_ipo_lifecycle(ipo_list):
                 item["status"] = "CLOSED"
         else:
             item["status"] = "OPEN"
+
+    # EXACT SORTING RULE:
+    # 1. Status priority: OPEN first, then UPCOMING, then CLOSED
+    # 2. GMP priority: Highest GMP (₹) on top (even if date is 26th vs 25th)
+    status_order = {"OPEN": 1, "UPCOMING": 2, "CLOSED": 3}
+    
+    ipo_list.sort(
+        key=lambda x: (
+            status_order.get(x.get("status", "CLOSED"), 4),
+            -float(x.get("gmp", 0.0)),
+            -float(x.get("gmp_percentage", 0.0))
+        )
+    )
 
     return ipo_list
 
@@ -82,11 +95,11 @@ def home():
 @app.get("/api/ipos/live")
 def get_live_ipos(force_refresh: bool = False):
     raw_data = fetch_live_gmp()
-    return process_ipo_lifecycle(raw_data)
+    return process_and_sort_ipos(raw_data)
 
 @app.get("/api/ipos/{status}")
 def get_ipos_by_status(status: str):
     raw_data = fetch_live_gmp()
-    processed = process_ipo_lifecycle(raw_data)
+    processed = process_and_sort_ipos(raw_data)
     status_upper = status.upper()
     return [x for x in processed if x.get("status") == status_upper]
