@@ -5,146 +5,160 @@ from datetime import datetime, timezone, timedelta
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
 }
 
 def clean_txt(t):
     return re.sub(r'\s+', ' ', t).strip() if t else ""
 
 def parse_num(val_str):
-    clean_s = val_str.replace(',', '').replace('₹', '').strip()
-    nums = re.findall(r'[-+]?\d+(?:\.\d+)?', clean_s)
+    nums = re.findall(r'[-+]?\d+(?:\.\d+)?', val_str.replace(',', '').replace('₹', ''))
     return float(nums[0]) if nums else 0.0
 
 def fetch_live_gmp():
-    url = f"https://www.ipopremium.in/?v={int(datetime.now().timestamp())}"
+    url = f"https://www.investorgain.com/report/ipo-gmp-live/331/?v={int(datetime.now().timestamp())}"
     scraped_list = []
-    seen_ids = set()
+    seen_names = set()
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=12)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
             return []
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        
-        # IPO Premium list blocks
-        all_text = soup.get_text()
-        
-        # Cards search across all potential blocks
-        cards = soup.find_all(lambda tag: tag.name in ["div", "tr", "li"] and ("Mainboard" in tag.text or "SME" in tag.text) and len(tag.text) < 600)
-        
-        # If standard card tags aren't isolated, extract rows directly
-        if not cards:
-            cards = soup.find_all(["tr", "div"])
+        table = soup.find("table")
+        if not table:
+            return []
 
-        for card in cards:
-            text = clean_txt(card.text)
-            if not text or len(text) < 15:
+        rows = table.find_all("tr")
+
+        for idx, row in enumerate(rows):
+            cols = row.find_all(["td", "th"])
+            # अगर सेल बहुत कम हैं या हेडर पंक्ति है तो छोड़ें
+            if len(cols) < 3:
                 continue
 
-            if not ("Mainboard" in text or "SME" in text):
-                continue
-
-            # Extract Category
-            is_sme = "SME" in text
-            category = "SME" if is_sme else "MAINBOARD"
-
-            # Extract Company Name
-            name_match = re.search(r'([A-Za-z0-9\s\.\&\(\)\'-]+?)\s*(?:Mainboard|BSE SME|NSE SME)', text)
-            if not name_match:
-                continue
+            raw_name = clean_txt(cols[0].text)
             
-            raw_name = clean_txt(name_match.group(1))
-            if len(raw_name) < 3 or any(w in raw_name.upper() for w in ["SEARCH", "PREMIUM", "SIGN IN", "CALENDAR"]):
+            # हेडर या खाली नाम छोड़ें
+            if not raw_name or len(raw_name) < 2 or raw_name.upper() in ["IPO", "IPO NAME", "COMPANY"]:
                 continue
 
-            c_id = re.sub(r'[^a-zA-Z0-9]', '-', raw_name.lower())[:35].strip('-')
-            if not c_id or c_id in seen_ids:
-                continue
+            # 1. SME vs MAINBOARD
+            is_sme = "SME" in raw_name.upper()
 
-            # Extract Status
-            text_u = text.upper()
-            if any(w in text_u for w in ["CLOSED", "LISTED", "AWAITING ALLOTMENT"]):
+            # 2. STATUS CHECK (Open, Upcoming, Closed)
+            name_u = raw_name.upper()
+            row_u = row.text.upper()
+
+            if any(k in name_u for k in ["(L)", "LISTED", "CLOSED"]) or "LISTED" in row_u or "CLOSED" in row_u or name_u.endswith(" C") or name_u.endswith(" L"):
                 status = "CLOSED"
-            elif any(w in text_u for w in ["OPENS IN", "PRE-APPLY"]):
+            elif "(U)" in name_u or name_u.endswith(" U") or "UPCOMING" in row_u or "PRE-APPLY" in row_u:
                 status = "UPCOMING"
-            elif any(w in text_u for w in ["CLOSES IN", "CLOSES TODAY", "APPLY"]):
-                status = "OPEN"
             else:
                 status = "OPEN"
 
-            # Extract Dates (e.g., Sep 24 – Sep 28)
-            date_m = re.search(r'((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s*[–-]\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)?\s*\d{1,2})', text, re.IGNORECASE)
-            date_range = date_m.group(1) if date_m else "Live"
+            # Clean Name
+            clean_name = re.sub(r'\[email&#160;protected\]|\[email\s*protected\]', '', raw_name, flags=re.IGNORECASE)
+            clean_name = re.sub(r'\([+-]?\d+(?:\.\d+)?%\)', '', clean_name)
+            clean_name = re.sub(r'(\(?(BSE\s+|NSE\s+)?SME\)?[UOCLCT]*|IPO[UOCLCT]*$|IPO[A-Z@\d\.\s\(\)%]*$)', '', clean_name, flags=re.IGNORECASE).strip()
+            clean_name = clean_name.strip(' -–@')
 
-            # Extract GMP and Percentage (e.g. ₹15.5+45.6% or ₹0)
-            gmp_m = re.search(r'₹\s*([0-9\.]+)\s*(?:[+–-]\s*([0-9\.]+)%)?', text)
+            if not clean_name or clean_name.lower() in seen_names:
+                continue
+
+            # Unique ID
+            c_id = re.sub(r'[^a-zA-Z0-9]', '-', clean_name.lower()).strip('-') + f"-{idx}"
+            seen_names.add(clean_name.lower())
+
+            # 3. EXTRACT GMP (Col 1)
+            gmp_text = clean_txt(cols[1].text) if len(cols) > 1 else ""
             gmp_val = 0.0
             gmp_pct = 0.0
-            if gmp_m:
-                gmp_val = parse_num(gmp_m.group(1))
-                if gmp_m.group(2):
-                    gmp_pct = parse_num(gmp_m.group(2))
 
-            # Extract Price (e.g. ₹32–34 or ₹258–272)
-            price_m = re.search(r'₹\s*(\d+)(?:[–-]\s*(\d+))?', text[gmp_m.end():] if gmp_m else text)
-            base_price = 0.0
-            price_display = "--"
-            if price_m:
-                p1 = parse_num(price_m.group(1))
-                p2 = parse_num(price_m.group(2)) if price_m.group(2) else p1
-                base_price = max(p1, p2)
-                price_display = f"₹{int(base_price)}"
+            if "--" not in gmp_text and re.search(r'\d', gmp_text):
+                pct_m = re.search(r'\(([+-]?\d+(?:\.\d+)?)%\)', gmp_text)
+                if pct_m:
+                    gmp_pct = abs(float(pct_m.group(1)))
+                cell_no_pct = re.sub(r'\(.*?\)', '', gmp_text)
+                gmp_val = parse_num(cell_no_pct)
 
-            if gmp_pct == 0.0 and base_price > 0 and gmp_val > 0:
-                gmp_pct = round((gmp_val / base_price) * 100, 2)
+            # 4. SUBSCRIPTION (Col 3)
+            sub_val = "--"
+            if len(cols) > 3:
+                s_txt = clean_txt(cols[3].text)
+                if "x" in s_txt.lower() or parse_num(s_txt) > 0:
+                    sub_val = s_txt if "x" in s_txt.lower() else f"{s_txt}x"
 
-            # Extract Lot Size (e.g. 441, 55, 1200)
-            lot_size = 0
-            lot_m = re.search(r'\b(441|1200|1600|2000|1000|600|85|115|49|55|37|41|111|101|150|50|100)\b', text)
-            if lot_m:
-                lot_size = int(lot_m.group(1))
-            else:
-                lot_size = 1200 if is_sme else (50 if base_price > 100 else 100)
+            # 5. ISSUE PRICE (Col 4)
+            price_val = 0.0
+            if len(cols) > 4:
+                price_val = parse_num(cols[4].text)
 
-            # Extract Issue Size (e.g. ₹1,091.68 cr)
-            size_m = re.search(r'₹\s*([0-9,]+(?:\.[0-9]+)?\s*cr)', text, re.IGNORECASE)
-            issue_size = f"₹{size_m.group(1)}" if size_m else "--"
+            if gmp_pct == 0.0 and price_val > 0 and gmp_val > 0:
+                gmp_pct = round((gmp_val / price_val) * 100, 2)
+
+            # 6. ISSUE SIZE (Col 5)
+            size_val = "--"
+            if len(cols) > 5:
+                sz_txt = clean_txt(cols[5].text)
+                if "Cr" in sz_txt or "₹" in sz_txt:
+                    size_val = sz_txt
+
+            # 7. LOT SIZE (Col 6)
+            lot_val = 0
+            if len(cols) > 6:
+                l_txt = clean_txt(cols[6].text).replace(',', '')
+                if l_txt.isdigit():
+                    lot_val = int(l_txt)
+
+            if lot_val == 0:
+                lot_val = 1200 if is_sme else (50 if price_val > 100 else 100)
+
+            # Dates (Col 7 & 8)
+            open_d = clean_txt(cols[7].text) if len(cols) > 7 else ""
+            close_d = clean_txt(cols[8].text) if len(cols) > 8 else ""
+            date_range = f"{open_d} - {close_d}" if open_d and close_d else "Live"
+
+            # Accurate Profit Calculation
+            ret_prof = round(gmp_val * lot_val, 2) if gmp_val > 0 else 0.0
+            hni_prof = round(ret_prof * 14, 2) if ret_prof > 0 else 0.0
 
             # IST Timestamp
             ist = timezone(timedelta(hours=5, minutes=30))
-            last_heard = datetime.now(ist).strftime("%d %b, %I:%M %p")
-
-            # Profit Calculations
-            ret_profit = round(gmp_val * lot_size, 2) if gmp_val > 0 else 0.0
-            hni_profit = round(ret_profit * 14, 2) if ret_profit > 0 else 0.0
+            now_str = datetime.now(ist).strftime("%d %b, %I:%M %p")
 
             scraped_list.append({
                 "id": c_id,
-                "name": raw_name,
-                "category": category,
+                "name": clean_name,
+                "category": "SME" if is_sme else "MAINBOARD",
                 "date_range": date_range,
-                "price": price_display,
-                "lot_size": lot_size,
-                "issue_size": issue_size,
+                "price": f"₹{int(price_val) if price_val.is_integer() else price_val}" if price_val > 0 else "--",
+                "lot_size": lot_val,
+                "issue_size": size_val,
                 "gmp": gmp_val,
                 "gmp_percentage": gmp_pct,
-                "last_heard": last_heard,
-                "allotment_date": "--",
-                "listing_date": "--",
-                "retail_profit": ret_profit,
-                "hni_profit": hni_profit,
+                "last_heard": now_str,
+                "allotment_date": clean_txt(cols[9].text) if len(cols) > 9 else "--",
+                "listing_date": clean_txt(cols[10].text) if len(cols) > 10 else "--",
+                "retail_profit": ret_prof,
+                "hni_profit": hni_prof,
                 "status": status,
                 "listing_price": "--",
                 "current_price": "--",
-                "subscription": {"total": "--", "qib": "--", "hni": "--", "retail": "--"},
+                "subscription": {
+                    "total": sub_val,
+                    "qib": "--",
+                    "hni": "--",
+                    "retail": "--"
+                },
                 "anchor": "Live Data",
                 "registrar": "Link Intime / KFin"
             })
-            seen_ids.add(c_id)
 
     except Exception as e:
-        print(f"Scraper Error: {e}")
+        print(f"Scraper error: {e}")
 
     return scraped_list
