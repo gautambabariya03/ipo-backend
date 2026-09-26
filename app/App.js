@@ -1,491 +1,559 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+﻿import AsyncStorage from '@react-native-async-storage/async-storage';
+import LoginScreen from './LoginScreen';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  StyleSheet,
-  Text,
+  SafeAreaView,
   View,
+  Text,
   FlatList,
   TouchableOpacity,
-  ActivityIndicator,
-  SafeAreaView,
-  StatusBar,
   TextInput,
-  Modal,
-  Alert,
-  KeyboardAvoidingView,
-  Platform
+  RefreshControl,
+  StyleSheet,
+  ActivityIndicator,
+  StatusBar,
+  Linking,
+  Share,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
-import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
-import { auth } from './firebase';
 
-const BACKEND_URL = 'https://ipo-backend-fpjo.onrender.com';
+const BACKEND_URL = 'https://ipo-backend-fpjo.onrender.com/api/ipos/live';
 
-export default function App() {
+function MainOriginalApp() {
   const [ipos, setIpos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('ALL'); // ALL, MAINBOARD, SME
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedTab, setSelectedTab] = useState('OPEN'); // OPEN | UPCOMING | CLOSED
+  const [selectedCategory, setSelectedCategory] = useState('ALL'); // ALL | MAINBOARD | SME
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Auth & OTP States
-  const [userNumber, setUserNumber] = useState(null);
-  const [authModalVisible, setAuthModalVisible] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [verificationId, setVerificationId] = useState(null);
-  const [otpCode, setOtpCode] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-  const [resendTimer, setResendTimer] = useState(30);
 
-  const recaptchaVerifier = useRef(null);
-
-  useEffect(() => {
-    loadUserSession();
-    fetchIpos();
-  }, []);
-
-  useEffect(() => {
-    let interval;
-    if (verificationId && resendTimer > 0) {
-      interval = setInterval(() => {
-        setResendTimer((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [verificationId, resendTimer]);
-
-  const loadUserSession = async () => {
+  // 1. Data Fetch Function
+  const fetchLiveIPOs = useCallback(async (isManualRefresh = false) => {
     try {
-      const savedNumber = await AsyncStorage.getItem('user_phone_number');
-      if (savedNumber) setUserNumber(savedNumber);
-    } catch (e) {
-      console.log('Error loading user session', e);
-    }
-  };
-
-  const fetchIpos = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(`${BACKEND_URL}/api/ipos`);
-      const data = await res.json();
-      setIpos(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.log('Fetch error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendOtp = async () => {
-    if (!phoneNumber || phoneNumber.length < 10) {
-      Alert.alert('Invalid Number', 'Kripya 10-digit mobile number enter karein.');
-      return;
-    }
-    try {
-      setAuthLoading(true);
-      const fullPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91${phoneNumber}`;
-      const phoneProvider = new PhoneAuthProvider(auth);
-      const verId = await phoneProvider.verifyPhoneNumber(
-        fullPhone,
-        recaptchaVerifier.current
-      );
-      setVerificationId(verId);
-      setResendTimer(30);
-      Alert.alert('OTP Sent', `OTP ${fullPhone} par bhej diya gaya hai.`);
-    } catch (err) {
-      Alert.alert('Verification Failed', err.message || 'SMS send karne me dikkat aayi.');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    if (!otpCode || otpCode.length < 6) {
-      Alert.alert('Invalid OTP', 'Kripya 6-digit OTP code enter karein.');
-      return;
-    }
-    try {
-      setAuthLoading(true);
-      const credential = PhoneAuthProvider.credential(verificationId, otpCode);
-      await signInWithCredential(auth, credential);
-      
-      const fullPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91${phoneNumber}`;
-      await AsyncStorage.setItem('user_phone_number', fullPhone);
-      setUserNumber(fullPhone);
-      setAuthModalVisible(false);
-      setVerificationId(null);
-      setOtpCode('');
-      setPhoneNumber('');
-      Alert.alert('Success', 'Mobile number successfully verify ho gaya!');
-    } catch (err) {
-      Alert.alert('Wrong OTP', 'Aapka dala gaya OTP galat ya expire ho chuka hai.');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    Alert.alert('Logout', 'Kya aap logout karna chahte hain?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          await AsyncStorage.removeItem('user_phone_number');
-          setUserNumber(null);
+      if (isManualRefresh) setRefreshing(true);
+      const res = await fetch(`${BACKEND_URL}?force_refresh=${isManualRefresh}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setIpos(data);
         }
       }
-    ]);
+    } catch (err) {
+      console.log('Error fetching live IPOs:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // 2. Initial Mount + 30-Second Automatic Polling (With Cleanup)
+  useEffect(() => {
+    fetchLiveIPOs();
+
+    const intervalId = setInterval(() => {
+      fetchLiveIPOs(false);
+    }, 30000); // Har 30 second me background refresh
+
+    return () => clearInterval(intervalId);
+  }, [fetchLiveIPOs]);
+
+  // 3. Tab & Category Filtering
+  const filteredIPOs = useMemo(() => {
+    return ipos.filter((item) => {
+      // Tab filter
+      const itemStatus = (item.status || 'OPEN').toUpperCase();
+      const tabMatch = itemStatus === selectedTab;
+
+      // Category filter
+      const itemCategory = (item.category || 'MAINBOARD').toUpperCase();
+      const catMatch =
+        selectedCategory === 'ALL' || itemCategory === selectedCategory;
+
+      // Search filter
+      const searchMatch =
+        searchQuery.trim() === '' ||
+        (item.name &&
+          item.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      return tabMatch && catMatch && searchMatch;
+    });
+  }, [ipos, selectedTab, selectedCategory, searchQuery]);
+
+  // Share functionality
+  const handleShare = (item) => {
+    Share.share({
+      message: `${item.name} (${item.category})\nDate: ${item.date_range}\nGMP: ₹${item.gmp} (${item.gmp_percentage}%)\nPrice: ${item.price}`,
+    });
   };
 
-  const filteredIpos = ipos.filter(item => {
-    const matchesFilter =
-      filter === 'ALL' ? true :
-      filter === 'SME' ? (item.is_sme || item.category === 'SME') :
-      (!item.is_sme && item.category !== 'SME');
-    const matchesSearch = item.name ? item.name.toLowerCase().includes(searchQuery.toLowerCase()) : true;
-    return matchesFilter && matchesSearch;
-  });
+  // Render IPO Card
+  const renderItem = ({ item }) => {
+    const isMainboard = item.category === 'MAINBOARD';
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.companyName} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <View
+            style={[
+              styles.badge,
+              isMainboard ? styles.badgeMainboard : styles.badgeSme,
+            ]}
+          >
+            <Text style={styles.badgeText}>{item.category}</Text>
+          </View>
+        </View>
+
+        <View style={styles.dateRow}>
+          <Text style={styles.dateText}>📅 {item.date_range}</Text>
+        </View>
+
+        {/* Live GMP Banner */}
+        <View style={styles.gmpBanner}>
+          <View>
+            <Text style={styles.gmpTitle}>LIVE GMP TICKER</Text>
+            <Text style={styles.lastHeardText}>Updated: {item.last_heard}</Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.gmpValue}>
+              {item.gmp > 0 ? `+₹${item.gmp}` : item.gmp === 0 ? '--' : `₹${item.gmp}`}
+            </Text>
+            <Text style={styles.gmpPercent}>
+              {item.gmp_percentage > 0 ? `+${item.gmp_percentage}%` : 'NOT DECLARED'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Info Grid */}
+        <View style={styles.grid}>
+          <View style={styles.gridCol}>
+            <Text style={styles.gridLabel}>ISSUE PRICE</Text>
+            <Text style={styles.gridValue}>{item.price}</Text>
+          </View>
+          <View style={styles.gridCol}>
+            <Text style={styles.gridLabel}>LOT SIZE</Text>
+            <Text style={styles.gridValue}>{item.lot_size} sh</Text>
+          </View>
+          <View style={styles.gridCol}>
+            <Text style={styles.gridLabel}>ISSUE SIZE</Text>
+            <Text style={styles.gridValue}>{item.issue_size}</Text>
+          </View>
+        </View>
+
+        {/* Profit Grid */}
+        <View style={styles.grid}>
+          <View style={styles.gridCol}>
+            <Text style={styles.gridLabel}>EST. RETAIL PROFIT</Text>
+            <Text style={[styles.gridValue, { color: '#00e676' }]}>
+              {item.retail_profit > 0 ? `₹${item.retail_profit}` : '--'}
+            </Text>
+          </View>
+          <View style={styles.gridCol}>
+            <Text style={styles.gridLabel}>EST. HNI PROFIT</Text>
+            <Text style={[styles.gridValue, { color: '#00e676' }]}>
+              {item.hni_profit > 0 ? `₹${item.hni_profit}` : '--'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Footer Dates */}
+        <View style={styles.cardFooter}>
+          <Text style={styles.footerDate}>Allotment: {item.allotment_date}</Text>
+          <Text style={styles.footerDate}>Listing: {item.listing_date}</Text>
+        </View>
+
+        {/* Action Buttons */}
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={styles.actionButtonOutline}
+            onPress={() => handleShare(item)}
+          >
+            <Text style={styles.outlineButtonText}>SHARE</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.actionButtonPrimary}
+            onPress={() =>
+              Linking.openURL('https://zerodha.com/open-account').catch(() => {})
+            }
+          >
+            <Text style={styles.primaryButtonText}>APPLY IPO</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B0E14" />
-      
-      {/* Firebase reCAPTCHA Modal */}
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifier}
-        firebaseConfig={auth.app.options}
-        attemptInvisibleVerification={true}
-      />
+      <StatusBar barStyle="light-content" backgroundColor="#0B0F19" />
 
-      {/* Top Header */}
-      <View style={styles.header}>
+      {/* Top App Header */}
+      <View style={styles.topHeader}>
         <View>
-          <Text style={styles.headerTitle}>Apex IPO Tracker</Text>
-          <Text style={styles.headerSubtitle}>Live GMP & Allotment Engine</Text>
+          <Text style={styles.appTitle}>APEX IPO</Text>
+          <Text style={styles.appSubTitle}>TERMINAL PRO</Text>
         </View>
-
-        {userNumber ? (
-          <TouchableOpacity style={styles.userBadge} onPress={handleLogout}>
-            <Text style={styles.userBadgeDot}>●</Text>
-            <Text style={styles.userBadgeText}>{userNumber.slice(-4)}</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            style={styles.loginBtn}
-            onPress={() => setAuthModalVisible(true)}
-          >
-            <Text style={styles.loginBtnText}>Verify Phone</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Search Input */}
-      <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search IPO by name..."
+          placeholder="Search IPO..."
           placeholderTextColor="#64748B"
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
       </View>
 
-      {/* Filter Tabs */}
+      {/* Status Tabs: OPEN / UPCOMING / CLOSED */}
       <View style={styles.tabContainer}>
-        {['ALL', 'MAINBOARD', 'SME'].map(t => (
+        {['OPEN', 'UPCOMING', 'CLOSED'].map((tab) => (
           <TouchableOpacity
-            key={t}
-            style={[styles.tab, filter === t && styles.activeTab]}
-            onPress={() => setFilter(t)}
+            key={tab}
+            style={[styles.tabButton, selectedTab === tab && styles.tabButtonActive]}
+            onPress={() => setSelectedTab(tab)}
           >
-            <Text style={[styles.tabText, filter === t && styles.activeTabText]}>
-              {t}
+            {tab === 'OPEN' && <View style={styles.onlineDot} />}
+            <Text
+              style={[
+                styles.tabText,
+                selectedTab === tab && styles.tabTextActive,
+              ]}
+            >
+              {tab}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* List / Content */}
+      {/* Category Pills: ALL / MAINBOARD / SME */}
+      <View style={styles.catContainer}>
+        <View style={{ flexDirection: 'row' }}>
+          {['ALL', 'MAINBOARD', 'SME'].map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={[
+                styles.catPill,
+                selectedCategory === cat && styles.catPillActive,
+              ]}
+              onPress={() => setSelectedCategory(cat)}
+            >
+              <Text
+                style={[
+                  styles.catText,
+                  selectedCategory === cat && styles.catTextActive,
+                ]}
+              >
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.countText}>{filteredIPOs.length} IPOs</Text>
+      </View>
+
+      {/* List or Loader */}
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#38BDF8" />
-          <Text style={styles.loadingText}>Syncing Live GMP Data...</Text>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#00e676" />
+          <Text style={styles.loadingText}>Fetching live IPO records...</Text>
         </View>
       ) : (
         <FlatList
-          data={filteredIpos}
-          keyExtractor={(item, index) => item.id || index.toString()}
+          data={filteredIPOs}
+          keyExtractor={(item) => item.id || item.name}
+          renderItem={renderItem}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>{item.name}</Text>
-                <View style={[styles.tag, item.is_sme ? styles.smeTag : styles.mainTag]}>
-                  <Text style={styles.tagText}>{item.is_sme ? 'SME' : 'MAIN'}</Text>
-                </View>
-              </View>
-              <View style={styles.row}>
-                <View>
-                  <Text style={styles.label}>Price Band</Text>
-                  <Text style={styles.val}>₹{item.price || item.price_band || '--'}</Text>
-                </View>
-                <View>
-                  <Text style={styles.label}>Est. Premium (GMP)</Text>
-                  <Text style={styles.gmpVal}>+₹{item.gmp || 0} ({item.gain_percentage || 0}%)</Text>
-                </View>
-              </View>
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchLiveIPOs(true)}
+              tintColor="#00e676"
+              colors={['#00e676']}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.centerContainer}>
+              <Text style={styles.emptyText}>
+                No {selectedTab} IPOs found for {selectedCategory}.
+              </Text>
             </View>
-          )}
+          }
         />
       )}
-
-      {/* OTP Authentication Modal */}
-      <Modal
-        visible={authModalVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setAuthModalVisible(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalOverlay}
-        >
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {verificationId ? 'Enter 6-Digit OTP' : 'Verify Mobile Number'}
-              </Text>
-              <TouchableOpacity onPress={() => setAuthModalVisible(false)}>
-                <Text style={styles.closeBtn}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.modalDesc}>
-              {verificationId
-                ? `SMS verification code has been sent to +91 ${phoneNumber}`
-                : 'Free official SMS OTP verification powered by Google Firebase'}
-            </Text>
-
-            {!verificationId ? (
-              <View style={styles.inputGroup}>
-                <View style={styles.phoneInputRow}>
-                  <Text style={styles.countryCode}>+91</Text>
-                  <TextInput
-                    style={styles.phoneInput}
-                    placeholder="Enter 10 digit number"
-                    placeholderTextColor="#64748B"
-                    keyboardType="phone-pad"
-                    maxLength={10}
-                    value={phoneNumber}
-                    onChangeText={setPhoneNumber}
-                  />
-                </View>
-                <TouchableOpacity
-                  style={styles.primaryBtn}
-                  onPress={handleSendOtp}
-                  disabled={authLoading}
-                >
-                  {authLoading ? (
-                    <ActivityIndicator color="#0B0E14" />
-                  ) : (
-                    <Text style={styles.primaryBtnText}>Send OTP Code</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.inputGroup}>
-                <TextInput
-                  style={styles.otpInput}
-                  placeholder="• • • • • •"
-                  placeholderTextColor="#64748B"
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  value={otpCode}
-                  onChangeText={setOtpCode}
-                  textAlign="center"
-                />
-
-                <TouchableOpacity
-                  style={styles.primaryBtn}
-                  onPress={handleVerifyOtp}
-                  disabled={authLoading}
-                >
-                  {authLoading ? (
-                    <ActivityIndicator color="#0B0E14" />
-                  ) : (
-                    <Text style={styles.primaryBtnText}>Verify & Login</Text>
-                  )}
-                </TouchableOpacity>
-
-                <View style={styles.resendRow}>
-                  {resendTimer > 0 ? (
-                    <Text style={styles.resendTimerText}>
-                      Resend OTP in {resendTimer}s
-                    </Text>
-                  ) : (
-                    <TouchableOpacity onPress={handleSendOtp} disabled={authLoading}>
-                      <Text style={styles.resendBtnText}>Resend OTP Now</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            )}
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0B0E14' },
-  header: {
+  container: {
+    flex: 1,
+    backgroundColor: '#0B0F19',
+  },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  appTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  appSubTitle: {
+    color: '#00e676',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  searchInput: {
+    width: '45%',
+    height: 36,
+    backgroundColor: '#161F30',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    color: '#F8FAFC',
+    fontSize: 12,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#111827',
+    padding: 6,
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 12,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  tabButtonActive: {
+    backgroundColor: '#10B981',
+  },
+  onlineDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#00e676',
+    marginRight: 6,
+  },
+  tabText: {
+    color: '#94A3B8',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  tabTextActive: {
+    color: '#0B0F19',
+  },
+  catContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B'
-  },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#F8FAFC' },
-  headerSubtitle: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
-  userBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#064E3B',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#10B981'
-  },
-  userBadgeDot: { color: '#10B981', fontSize: 12, marginRight: 6 },
-  userBadgeText: { color: '#ECFDF5', fontSize: 12, fontWeight: '600' },
-  loginBtn: {
-    backgroundColor: '#38BDF8',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8
-  },
-  loginBtnText: { color: '#0B0E14', fontSize: 13, fontWeight: '700' },
-  searchContainer: { paddingHorizontal: 16, marginTop: 12 },
-  searchInput: {
-    backgroundColor: '#1E293B',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#F8FAFC',
-    fontSize: 14
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
     marginVertical: 12,
-    gap: 8
   },
-  tab: {
+  catPill: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: '#1E293B'
+    backgroundColor: '#161F30',
+    marginRight: 8,
   },
-  activeTab: { backgroundColor: '#38BDF8' },
-  tabText: { color: '#94A3B8', fontSize: 12, fontWeight: '600' },
-  activeTabText: { color: '#0B0E14', fontWeight: '700' },
-  listContent: { paddingHorizontal: 16, paddingBottom: 24 },
+  catPillActive: {
+    borderWidth: 1,
+    borderColor: '#00e676',
+    backgroundColor: 'rgba(0, 230, 118, 0.1)',
+  },
+  catText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  catTextActive: {
+    color: '#00e676',
+  },
+  countText: {
+    color: '#64748B',
+    fontSize: 12,
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+  },
   card: {
     backgroundColor: '#131B2E',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#1E293B'
+    borderColor: '#1E293B',
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10
   },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: '#F1F5F9', flex: 1 },
-  tag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
-  mainTag: { backgroundColor: '#0369A1' },
-  smeTag: { backgroundColor: '#7C3AED' },
-  tagText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
-  label: { fontSize: 11, color: '#64748B' },
-  val: { fontSize: 13, fontWeight: '600', color: '#CBD5E1', marginTop: 2 },
-  gmpVal: { fontSize: 14, fontWeight: '700', color: '#34D399', marginTop: 2 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#94A3B8', marginTop: 10, fontSize: 13 },
-  modalOverlay: {
+  companyName: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '700',
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20
+    marginRight: 8,
   },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#131B2E',
-    borderRadius: 16,
-    padding: 20,
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  badgeMainboard: {
+    backgroundColor: '#1D4ED8',
+  },
+  badgeSme: {
+    backgroundColor: '#D97706',
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  dateRow: {
+    marginVertical: 6,
+  },
+  dateText: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  gmpBanner: {
+    backgroundColor: '#0F291E',
     borderWidth: 1,
-    borderColor: '#334155'
-  },
-  modalHeader: {
+    borderColor: '#00e676',
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#F8FAFC' },
-  closeBtn: { fontSize: 18, color: '#94A3B8' },
-  modalDesc: { color: '#94A3B8', fontSize: 12, marginVertical: 12, lineHeight: 18 },
-  inputGroup: { marginTop: 4 },
-  phoneInputRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+  },
+  gmpTitle: {
+    color: '#00e676',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  lastHeardText: {
+    color: '#64748B',
+    fontSize: 10,
+  },
+  gmpValue: {
+    color: '#00e676',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  gmpPercent: {
+    color: '#00e676',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  grid: {
+    flexDirection: 'row',
+    backgroundColor: '#0B0F19',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginTop: 6,
+  },
+  gridCol: {
+    flex: 1,
+  },
+  gridLabel: {
+    color: '#64748B',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  gridValue: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+  },
+  footerDate: {
+    color: '#64748B',
+    fontSize: 11,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+  },
+  actionButtonOutline: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#334155',
-    marginBottom: 16
+    marginRight: 8,
   },
-  countryCode: {
-    paddingHorizontal: 12,
+  outlineButtonText: {
     color: '#94A3B8',
-    fontSize: 15,
-    fontWeight: '600',
-    borderRightWidth: 1,
-    borderRightColor: '#334155'
+    fontWeight: '700',
+    fontSize: 12,
   },
-  phoneInput: {
+  actionButtonPrimary: {
     flex: 1,
-    paddingHorizontal: 12,
+    backgroundColor: '#2563EB',
     paddingVertical: 10,
-    color: '#F8FAFC',
-    fontSize: 16
-  },
-  otpInput: {
-    backgroundColor: '#1E293B',
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#38BDF8',
-    paddingVertical: 12,
-    color: '#38BDF8',
-    fontSize: 22,
-    letterSpacing: 8,
-    marginBottom: 16
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  primaryBtn: {
-    backgroundColor: '#38BDF8',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center'
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
   },
-  primaryBtnText: { color: '#0B0E14', fontSize: 14, fontWeight: '700' },
-  resendRow: { alignItems: 'center', marginTop: 14 },
-  resendTimerText: { color: '#64748B', fontSize: 12 },
-  resendBtnText: { color: '#38BDF8', fontSize: 13, fontWeight: '600' }
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 60,
+  },
+  loadingText: {
+    color: '#94A3B8',
+    marginTop: 10,
+    fontSize: 13,
+  },
+  emptyText: {
+    color: '#64748B',
+    fontSize: 14,
+  },
 });
+
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = React.useState(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const user = await AsyncStorage.getItem('user_phone_number');
+        setIsAuthenticated(!!user);
+      } catch (e) {
+        setIsAuthenticated(false);
+      }
+    })();
+  }, []);
+
+  if (isAuthenticated === null) return null;
+  if (!isAuthenticated) return <LoginScreen onLoginSuccess={() => setIsAuthenticated(true)} />;
+  return <MainOriginalApp />;
+}
