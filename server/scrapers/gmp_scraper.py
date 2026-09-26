@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 from datetime import datetime, timezone, timedelta
+from scrapers.listing_price_scraper import fetch_listing_performance, normalize_name
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -153,14 +154,23 @@ def fetch_live_gmp():
             if clean_title.upper() in ["NAME", "IPO NAME", ""] or (display_date == "Date TBA" and price_val == 0.0 and gmp_val == 0.0):
                 continue
 
-            c_id = re.sub(r'[^a-zA-Z0-9]', '-', clean_title.lower()).strip('-') + f"-{idx}"
-            if c_id in seen_ids:
-                continue
+            base_id = re.sub(r'[^a-zA-Z0-9]', '-', clean_title.lower()).strip('-')
+            c_id = base_id
+            dup_n = 1
+            while c_id in seen_ids:
+                dup_n += 1
+                c_id = f"{base_id}-{dup_n}"
             seen_ids.add(c_id)
 
             now_str = datetime.now(ist).strftime("%d %b, %I:%M %p")
             allot_str = clean_txt(cols[9].text) if len(cols) > 9 else "--"
             list_str = clean_txt(cols[10].text) if len(cols) > 10 else "--"
+            final_allot_str = allot_str if "BOA" not in allot_str.upper() else "--"
+
+            # Allotment is only "declared" once that date has actually arrived
+            # (used to decide which IPOs are eligible for the allotment checker)
+            allot_d = parse_date(final_allot_str)
+            allotment_declared = bool(allot_d and allot_d <= today)
 
             scraped_list.append({
                 "id": c_id,
@@ -173,7 +183,8 @@ def fetch_live_gmp():
                 "gmp": gmp_val,
                 "gmp_percentage": gmp_pct,
                 "last_heard": now_str,
-                "allotment_date": allot_str if "BOA" not in allot_str.upper() else "--",
+                "allotment_date": final_allot_str,
+                "allotment_declared": allotment_declared,
                 "listing_date": list_str if "LISTING" not in list_str.upper() else "--",
                 "retail_profit": ret_prof,
                 "hni_profit": hni_prof,
@@ -192,5 +203,21 @@ def fetch_live_gmp():
 
     except Exception as e:
         print(f"Scraper Error: {e}")
+
+    # CLOSED IPOs ke liye asli Listing Price aur Current Price (LTP) fetch karo
+    # (sirf ek extra request, sab CLOSED items ke liye ek saath match karke)
+    if any(item["status"] == "CLOSED" for item in scraped_list):
+        try:
+            listing_data = fetch_listing_performance()
+            for item in scraped_list:
+                if item["status"] != "CLOSED":
+                    continue
+                key = normalize_name(item["name"])
+                match = listing_data.get(key)
+                if match:
+                    item["listing_price"] = match["listing_price"]
+                    item["current_price"] = match["current_price"]
+        except Exception as e:
+            print(f"Listing Price Merge Error: {e}")
 
     return scraped_list

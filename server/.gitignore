@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+ipos_persistent.json
+notifications_persistent.json

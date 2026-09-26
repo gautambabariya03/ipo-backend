@@ -53,12 +53,24 @@ export default function App() {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPan, setNewPan] = useState('');
+  const [newAccountType, setNewAccountType] = useState('CDSL'); // CDSL, NSDL
+  const [newClientId, setNewClientId] = useState('');
+  const [newUpiId, setNewUpiId] = useState('');
 
   // Live Backend Allotment Batch
   const [selectedAllotmentIpo, setSelectedAllotmentIpo] = useState(null);
   const [ipoPickerOpen, setIpoPickerOpen] = useState(false);
   const [checkingProgress, setCheckingProgress] = useState(null);
   const [allotmentResults, setAllotmentResults] = useState({});
+
+  // Bids (self-tracked: jin IPOs me user ne apply kiya, unka status)
+  const [bids, setBids] = useState([]);
+  const [bidFilter, setBidFilter] = useState('All'); // All, Success, Pending, Failed
+  const [bidFormOpen, setBidFormOpen] = useState(false);
+  const [bidIpoPickerOpen, setBidIpoPickerOpen] = useState(false);
+  const [selectedBidIpo, setSelectedBidIpo] = useState(null);
+  const [selectedBidAccountId, setSelectedBidAccountId] = useState(null);
+  const [selectedBidStatus, setSelectedBidStatus] = useState('Pending');
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -67,6 +79,7 @@ export default function App() {
 
     loadSavedAccounts();
     loadSavedTheme();
+    loadSavedBids();
     fetchLiveIPOs();
     fetchNotifications();
 
@@ -153,12 +166,22 @@ export default function App() {
     }
     const updated = [
       ...accounts,
-      { id: Date.now().toString(), name: newName.toUpperCase().trim(), pan: newPan.toUpperCase().trim() }
+      {
+        id: Date.now().toString(),
+        name: newName.toUpperCase().trim(),
+        pan: newPan.toUpperCase().trim(),
+        accountType: newAccountType,
+        clientId: newClientId.trim(),
+        upiId: newUpiId.trim(),
+      }
     ];
     setAccounts(updated);
     await AsyncStorage.setItem('@family_accounts', JSON.stringify(updated));
     setNewName('');
     setNewPan('');
+    setNewAccountType('CDSL');
+    setNewClientId('');
+    setNewUpiId('');
     setAccountModalOpen(false);
   };
 
@@ -166,6 +189,46 @@ export default function App() {
     const updated = accounts.filter(x => x.id !== id);
     setAccounts(updated);
     await AsyncStorage.setItem('@family_accounts', JSON.stringify(updated));
+  };
+
+  // ----------------- Bids (self-tracked application status) -----------------
+  const loadSavedBids = async () => {
+    try {
+      const stored = await AsyncStorage.getItem('@my_bids');
+      if (stored) setBids(JSON.parse(stored));
+    } catch (e) {
+      console.log('Bids Load Error:', e);
+    }
+  };
+
+  const addBid = async () => {
+    if (!selectedBidIpo || !selectedBidAccountId) {
+      Alert.alert('Required', 'Please select an IPO and an Account');
+      return;
+    }
+    const account = accounts.find(a => a.id === selectedBidAccountId);
+    const newBid = {
+      id: Date.now().toString(),
+      ipoId: selectedBidIpo.id,
+      ipoName: selectedBidIpo.name,
+      accountName: account ? account.name : 'Unknown',
+      pan: account ? account.pan : '',
+      status: selectedBidStatus,
+      appliedDate: new Date().toISOString(),
+    };
+    const updated = [newBid, ...bids];
+    setBids(updated);
+    await AsyncStorage.setItem('@my_bids', JSON.stringify(updated));
+    setBidFormOpen(false);
+    setSelectedBidIpo(null);
+    setSelectedBidAccountId(null);
+    setSelectedBidStatus('Pending');
+  };
+
+  const deleteBid = async (id) => {
+    const updated = bids.filter(x => x.id !== id);
+    setBids(updated);
+    await AsyncStorage.setItem('@my_bids', JSON.stringify(updated));
   };
 
   const fetchLiveIPOs = async () => {
@@ -650,11 +713,67 @@ export default function App() {
         </View>
       )}
 
+      {activeTab === 'Bids' && (
+        <View style={{ flex: 1, padding: 14 }}>
+          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+            {['All', 'Success', 'Pending', 'Failed'].map(f => {
+              const isSelected = bidFilter === f;
+              return (
+                <TouchableOpacity
+                  key={f}
+                  style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8 }, isSelected && styles.chipActive]}
+                  onPress={() => setBidFilter(f)}
+                >
+                  <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{f}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity style={styles.batchTriggerBtn} onPress={() => setBidFormOpen(true)}>
+            <Text style={styles.primaryBtnText}>+ ADD BID</Text>
+          </TouchableOpacity>
+
+          <FlatList
+            data={bids.filter(b => bidFilter === 'All' || b.status === bidFilter)}
+            keyExtractor={item => item.id}
+            ListEmptyComponent={
+              <Text style={{ color: theme.textSub, textAlign: 'center', padding: 30 }}>No Bids Found</Text>
+            }
+            renderItem={({ item }) => (
+              <View style={[styles.allotCardItem, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.panHolderName, { color: theme.textMain }]}>{item.ipoName}</Text>
+                  <Text style={[styles.panNumber, { color: theme.textSub }]}>{item.accountName} • {item.pan}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={[
+                    styles.statusPill,
+                    item.status === 'Success' ? styles.statusAllotted : styles.statusNotApplied
+                  ]}>
+                    <Text style={[
+                      styles.statusPillText,
+                      item.status === 'Success' ? { color: '#10B981' } : { color: theme.textSub }
+                    ]}>
+                      {item.status}
+                    </Text>
+                  </View>
+                  <TouchableOpacity style={{ padding: 6, marginLeft: 6 }} onPress={() => deleteBid(item.id)}>
+                    <Ionicons name="trash-outline" size={16} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          />
+        </View>
+      )}
+
       {/* BOTTOM NAVBAR */}
       <View style={[styles.bottomNavbar, { backgroundColor: theme.headerBg, borderTopColor: theme.border }]}>
         {[
           { key: 'IPO', icon: 'stats-chart', label: 'Terminal' },
           { key: 'Account', icon: 'wallet-outline', label: 'Vault' },
+          { key: 'Bids', icon: 'document-text-outline', label: 'Bids' },
           { key: 'Allotment', icon: 'shield-checkmark-outline', label: 'Allotment' }
         ].map(nav => {
           const isActive = activeTab === nav.key;
@@ -848,6 +967,38 @@ export default function App() {
               style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
             />
 
+            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>DEMAT ACCOUNT TYPE (OPTIONAL)</Text>
+            <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+              {['CDSL', 'NSDL'].map(type => {
+                const isSelected = newAccountType === type;
+                return (
+                  <TouchableOpacity
+                    key={type}
+                    style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8 }, isSelected && styles.chipActive]}
+                    onPress={() => setNewAccountType(type)}
+                  >
+                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{type}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TextInput
+              placeholder="Client ID / Beneficiary Number (optional)"
+              placeholderTextColor={theme.textSub}
+              value={newClientId}
+              onChangeText={setNewClientId}
+              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
+            />
+            <TextInput
+              placeholder="UPI ID (PhonePe, GPay, BHIM etc.) (optional)"
+              placeholderTextColor={theme.textSub}
+              value={newUpiId}
+              onChangeText={setNewUpiId}
+              autoCapitalize="none"
+              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
+            />
+
             <View style={{ flexDirection: 'row', marginTop: 12 }}>
               <TouchableOpacity
                 style={[styles.modalActionBtn, { backgroundColor: theme.innerBox, marginRight: 10 }]}
@@ -891,6 +1042,98 @@ export default function App() {
                 <Text style={{ color: theme.textSub, textAlign: 'center', padding: 20 }}>
                   No IPO with declared allotment yet
                 </Text>
+              }
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* ADD BID FORM MODAL */}
+      <Modal visible={bidFormOpen} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.addAccountModalCard, { backgroundColor: theme.cardBg }]}>
+            <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Track New Bid</Text>
+            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 12 }]}>SELF-TRACKED APPLICATION STATUS</Text>
+
+            <TouchableOpacity
+              style={[styles.ipoSelectBtn, { backgroundColor: theme.innerBox, borderColor: theme.border, marginBottom: 10 }]}
+              onPress={() => setBidIpoPickerOpen(true)}
+            >
+              <Text style={{ color: selectedBidIpo ? theme.textMain : theme.textSub }}>
+                {selectedBidIpo ? selectedBidIpo.name : 'Select IPO'}
+              </Text>
+              <Ionicons name="chevron-down" size={18} color={theme.textSub} />
+            </TouchableOpacity>
+
+            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>ACCOUNT (PAN)</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+              {accounts.map(acc => {
+                const isSelected = selectedBidAccountId === acc.id;
+                return (
+                  <TouchableOpacity
+                    key={acc.id}
+                    style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8, marginBottom: 8 }, isSelected && styles.chipActive]}
+                    onPress={() => setSelectedBidAccountId(acc.id)}
+                  >
+                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{acc.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {accounts.length === 0 && (
+                <Text style={{ color: theme.textSub, fontSize: 12 }}>Pehle Vault me account add karo</Text>
+              )}
+            </View>
+
+            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>STATUS</Text>
+            <View style={{ flexDirection: 'row', marginBottom: 14 }}>
+              {['Pending', 'Success', 'Failed'].map(s => {
+                const isSelected = selectedBidStatus === s;
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8 }, isSelected && styles.chipActive]}
+                    onPress={() => setSelectedBidStatus(s)}
+                  >
+                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{s}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={{ flexDirection: 'row' }}>
+              <TouchableOpacity
+                style={[styles.modalActionBtn, { backgroundColor: theme.innerBox, marginRight: 10 }]}
+                onPress={() => { setBidFormOpen(false); setSelectedBidIpo(null); setSelectedBidAccountId(null); }}
+              >
+                <Text style={{ color: theme.textSub, fontWeight: 'bold' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalActionBtn, { backgroundColor: '#10B981' }]} onPress={addBid}>
+                <Text style={styles.primaryBtnText}>Save Bid</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* SELECT IPO FOR BID MODAL */}
+      <Modal visible={bidIpoPickerOpen} transparent animationType="slide">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg, maxHeight: '75%' }]}>
+            <Text style={[styles.subHeaderTitle, { color: theme.textMain }]}>Select IPO</Text>
+            <FlatList
+              data={ipos}
+              keyExtractor={item => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.pickerRow, { borderBottomColor: theme.border }]}
+                  onPress={() => { setSelectedBidIpo(item); setBidIpoPickerOpen(false); }}
+                >
+                  <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.name}</Text>
+                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status}</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 20 }}>No IPOs loaded yet</Text>
               }
             />
           </View>
