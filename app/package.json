@@ -4,11 +4,14 @@
   "main": "index.js",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
-    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-async-storage/async-storage": "^2.2.0",
     "expo": "~57.0.24",
+    "expo-firebase-recaptcha": "^2.3.1",
     "expo-status-bar": "~57.0.1",
+    "firebase": "^12.19.0",
     "react": "19.2.3",
-    "react-native": "0.86.3"
+    "react-native": "0.86.3",
+    "react-native-webview": "13.16.1"
   },
   "scripts": {
     "start": "expo start",
