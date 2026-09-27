@@ -21,6 +21,15 @@ const BASE_URL = 'https://ipo-backend-fpjo.onrender.com';
 const API_URL = `${BASE_URL}/api/ipos/live`;
 const ALLOTMENT_API = `${BASE_URL}/api/allotment/check-batch`;
 
+// Har company naam ke liye ek consistent (deterministic) color deta hai —
+// same company hamesha same color pill/logo dikhayega
+const AVATAR_COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444', '#14B8A6', '#F97316'];
+function avatarColor(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
 export default function App() {
   const [ipos, setIpos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,6 +57,10 @@ export default function App() {
   const [notifModalOpen, setNotifModalOpen] = useState(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
+  // Search
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Accounts (Vault)
   const [accounts, setAccounts] = useState([]);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -63,15 +76,6 @@ export default function App() {
   const [checkingProgress, setCheckingProgress] = useState(null);
   const [allotmentResults, setAllotmentResults] = useState({});
 
-  // Bids (self-tracked: jin IPOs me user ne apply kiya, unka status)
-  const [bids, setBids] = useState([]);
-  const [bidFilter, setBidFilter] = useState('All'); // All, Success, Pending, Failed
-  const [bidFormOpen, setBidFormOpen] = useState(false);
-  const [bidIpoPickerOpen, setBidIpoPickerOpen] = useState(false);
-  const [selectedBidIpo, setSelectedBidIpo] = useState(null);
-  const [selectedBidAccountId, setSelectedBidAccountId] = useState(null);
-  const [selectedBidStatus, setSelectedBidStatus] = useState('Pending');
-
   useEffect(() => {
     const timer = setInterval(() => {
       setBlinkOn(prev => !prev);
@@ -79,7 +83,6 @@ export default function App() {
 
     loadSavedAccounts();
     loadSavedTheme();
-    loadSavedBids();
     fetchLiveIPOs();
     fetchNotifications();
 
@@ -191,46 +194,6 @@ export default function App() {
     await AsyncStorage.setItem('@family_accounts', JSON.stringify(updated));
   };
 
-  // ----------------- Bids (self-tracked application status) -----------------
-  const loadSavedBids = async () => {
-    try {
-      const stored = await AsyncStorage.getItem('@my_bids');
-      if (stored) setBids(JSON.parse(stored));
-    } catch (e) {
-      console.log('Bids Load Error:', e);
-    }
-  };
-
-  const addBid = async () => {
-    if (!selectedBidIpo || !selectedBidAccountId) {
-      Alert.alert('Required', 'Please select an IPO and an Account');
-      return;
-    }
-    const account = accounts.find(a => a.id === selectedBidAccountId);
-    const newBid = {
-      id: Date.now().toString(),
-      ipoId: selectedBidIpo.id,
-      ipoName: selectedBidIpo.name,
-      accountName: account ? account.name : 'Unknown',
-      pan: account ? account.pan : '',
-      status: selectedBidStatus,
-      appliedDate: new Date().toISOString(),
-    };
-    const updated = [newBid, ...bids];
-    setBids(updated);
-    await AsyncStorage.setItem('@my_bids', JSON.stringify(updated));
-    setBidFormOpen(false);
-    setSelectedBidIpo(null);
-    setSelectedBidAccountId(null);
-    setSelectedBidStatus('Pending');
-  };
-
-  const deleteBid = async (id) => {
-    const updated = bids.filter(x => x.id !== id);
-    setBids(updated);
-    await AsyncStorage.setItem('@my_bids', JSON.stringify(updated));
-  };
-
   const fetchLiveIPOs = async () => {
     try {
       const resp = await fetch(API_URL);
@@ -324,11 +287,18 @@ export default function App() {
     }
   };
 
-  const displayList = ipos.filter(item => {
-    const matchStatus = item.status === statusFilter;
-    const matchCategory = categoryFilter === 'ALL' || item.category === categoryFilter;
-    return matchStatus && matchCategory;
-  });
+  const displayList = ipos
+    .filter(item => {
+      const matchStatus = item.status === statusFilter;
+      const matchCategory = categoryFilter === 'ALL' || item.category === categoryFilter;
+      return matchStatus && matchCategory;
+    })
+    .sort((a, b) => {
+      if (statusFilter !== 'CLOSED') return 0;
+      // Jin IPOs ka allotment declare ho chuka hai, unhe upar dikhao — taaki
+      // allotment check karne wale IPO turant mil jaayein
+      return (b.allotment_declared ? 1 : 0) - (a.allotment_declared ? 1 : 0);
+    });
 
   // Allotment check sirf un IPOs ke liye valid hai jo CLOSED ho chuke hain
   // AUR jinka allotment date already aa chuka hai — OPEN/UPCOMING IPOs ya
@@ -336,6 +306,10 @@ export default function App() {
   const allotmentEligibleIpos = ipos.filter(
     item => item.status === 'CLOSED' && item.allotment_declared
   );
+
+  const searchResults = searchQuery.trim()
+    ? ipos.filter(item => item.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : [];
 
   const theme = {
     bg: isDarkMode ? '#0B0F19' : '#F3F4F6',
@@ -369,7 +343,10 @@ export default function App() {
         </View>
 
         <View style={styles.topRightActions}>
-          <TouchableOpacity style={[styles.iconBtn, { backgroundColor: theme.innerBox, marginRight: 8 }]}>
+          <TouchableOpacity
+            style={[styles.iconBtn, { backgroundColor: theme.innerBox, marginRight: 8 }]}
+            onPress={() => setSearchModalOpen(true)}
+          >
             <Ionicons name="search-outline" size={18} color={theme.textSub} />
           </TouchableOpacity>
 
@@ -466,9 +443,12 @@ export default function App() {
                 return (
                   <View style={[styles.cardContainer, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
                     <View style={styles.cardHeader}>
+                      <View style={[styles.logoAvatar, { backgroundColor: avatarColor(item.name) }]}>
+                        <Text style={styles.logoAvatarText}>{item.name.trim().charAt(0).toUpperCase()}</Text>
+                      </View>
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.cardTitle, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
-                        <Text style={[styles.cardDateRange, { color: theme.textSub }]}>📅 {item.date_range}</Text>
+                        <Text style={[styles.cardDateRange, { color: theme.textSub, marginTop: 3 }]}>📅 {item.date_range}</Text>
                       </View>
                       <View style={[styles.tagBadge, item.category === 'SME' ? styles.tagSme : styles.tagMain]}>
                         <Text style={styles.tagBadgeText}>{item.category}</Text>
@@ -586,11 +566,7 @@ export default function App() {
                         >
                           <Text style={styles.primaryBtnText}>CHECK ALLOTMENT</Text>
                         </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity style={styles.primaryActionBtn}>
-                          <Text style={styles.primaryBtnText}>APPLY IPO</Text>
-                        </TouchableOpacity>
-                      )}
+                      ) : null}
                     </View>
                   </View>
                 );
@@ -713,67 +689,11 @@ export default function App() {
         </View>
       )}
 
-      {activeTab === 'Bids' && (
-        <View style={{ flex: 1, padding: 14 }}>
-          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-            {['All', 'Success', 'Pending', 'Failed'].map(f => {
-              const isSelected = bidFilter === f;
-              return (
-                <TouchableOpacity
-                  key={f}
-                  style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8 }, isSelected && styles.chipActive]}
-                  onPress={() => setBidFilter(f)}
-                >
-                  <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{f}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <TouchableOpacity style={styles.batchTriggerBtn} onPress={() => setBidFormOpen(true)}>
-            <Text style={styles.primaryBtnText}>+ ADD BID</Text>
-          </TouchableOpacity>
-
-          <FlatList
-            data={bids.filter(b => bidFilter === 'All' || b.status === bidFilter)}
-            keyExtractor={item => item.id}
-            ListEmptyComponent={
-              <Text style={{ color: theme.textSub, textAlign: 'center', padding: 30 }}>No Bids Found</Text>
-            }
-            renderItem={({ item }) => (
-              <View style={[styles.allotCardItem, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.panHolderName, { color: theme.textMain }]}>{item.ipoName}</Text>
-                  <Text style={[styles.panNumber, { color: theme.textSub }]}>{item.accountName} • {item.pan}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <View style={[
-                    styles.statusPill,
-                    item.status === 'Success' ? styles.statusAllotted : styles.statusNotApplied
-                  ]}>
-                    <Text style={[
-                      styles.statusPillText,
-                      item.status === 'Success' ? { color: '#10B981' } : { color: theme.textSub }
-                    ]}>
-                      {item.status}
-                    </Text>
-                  </View>
-                  <TouchableOpacity style={{ padding: 6, marginLeft: 6 }} onPress={() => deleteBid(item.id)}>
-                    <Ionicons name="trash-outline" size={16} color="#EF4444" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          />
-        </View>
-      )}
-
       {/* BOTTOM NAVBAR */}
       <View style={[styles.bottomNavbar, { backgroundColor: theme.headerBg, borderTopColor: theme.border }]}>
         {[
           { key: 'IPO', icon: 'stats-chart', label: 'Terminal' },
           { key: 'Account', icon: 'wallet-outline', label: 'Vault' },
-          { key: 'Bids', icon: 'document-text-outline', label: 'Bids' },
           { key: 'Allotment', icon: 'shield-checkmark-outline', label: 'Allotment' }
         ].map(nav => {
           const isActive = activeTab === nav.key;
@@ -944,6 +864,56 @@ export default function App() {
         </View>
       </Modal>
 
+      {/* SEARCH MODAL */}
+      <Modal visible={searchModalOpen} transparent animationType="slide">
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg, maxHeight: '85%' }]}>
+            <View style={styles.sheetTop}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Search IPOs</Text>
+                <Text style={[styles.specKey, { color: theme.specKey }]}>SEARCH BY COMPANY NAME</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setSearchModalOpen(false); setSearchQuery(''); }}>
+                <Ionicons name="close-circle" size={24} color={theme.textSub} />
+              </TouchableOpacity>
+            </View>
+
+            <TextInput
+              placeholder="e.g. Moneyview, Orient Cables..."
+              placeholderTextColor={theme.textSub}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain, marginTop: 10 }]}
+            />
+
+            <FlatList
+              data={searchResults}
+              keyExtractor={item => item.id}
+              ListEmptyComponent={
+                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 24 }}>
+                  {searchQuery.trim() ? 'No matching IPO found' : 'Type a company name to search'}
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.pickerRow, { borderBottomColor: theme.border }]}
+                  onPress={() => {
+                    setStatusFilter(item.status);
+                    setCategoryFilter('ALL');
+                    setSearchModalOpen(false);
+                    setSearchQuery('');
+                  }}
+                >
+                  <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.name}</Text>
+                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status} • {item.category}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
       {/* ADD ACCOUNT MODAL */}
       <Modal visible={accountModalOpen} transparent animationType="fade">
         <View style={styles.modalBackdrop}>
@@ -1047,98 +1017,6 @@ export default function App() {
           </View>
         </View>
       </Modal>
-
-      {/* ADD BID FORM MODAL */}
-      <Modal visible={bidFormOpen} transparent animationType="fade">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.addAccountModalCard, { backgroundColor: theme.cardBg }]}>
-            <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Track New Bid</Text>
-            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 12 }]}>SELF-TRACKED APPLICATION STATUS</Text>
-
-            <TouchableOpacity
-              style={[styles.ipoSelectBtn, { backgroundColor: theme.innerBox, borderColor: theme.border, marginBottom: 10 }]}
-              onPress={() => setBidIpoPickerOpen(true)}
-            >
-              <Text style={{ color: selectedBidIpo ? theme.textMain : theme.textSub }}>
-                {selectedBidIpo ? selectedBidIpo.name : 'Select IPO'}
-              </Text>
-              <Ionicons name="chevron-down" size={18} color={theme.textSub} />
-            </TouchableOpacity>
-
-            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>ACCOUNT (PAN)</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
-              {accounts.map(acc => {
-                const isSelected = selectedBidAccountId === acc.id;
-                return (
-                  <TouchableOpacity
-                    key={acc.id}
-                    style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8, marginBottom: 8 }, isSelected && styles.chipActive]}
-                    onPress={() => setSelectedBidAccountId(acc.id)}
-                  >
-                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{acc.name}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-              {accounts.length === 0 && (
-                <Text style={{ color: theme.textSub, fontSize: 12 }}>Pehle Vault me account add karo</Text>
-              )}
-            </View>
-
-            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>STATUS</Text>
-            <View style={{ flexDirection: 'row', marginBottom: 14 }}>
-              {['Pending', 'Success', 'Failed'].map(s => {
-                const isSelected = selectedBidStatus === s;
-                return (
-                  <TouchableOpacity
-                    key={s}
-                    style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8 }, isSelected && styles.chipActive]}
-                    onPress={() => setSelectedBidStatus(s)}
-                  >
-                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{s}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={{ flexDirection: 'row' }}>
-              <TouchableOpacity
-                style={[styles.modalActionBtn, { backgroundColor: theme.innerBox, marginRight: 10 }]}
-                onPress={() => { setBidFormOpen(false); setSelectedBidIpo(null); setSelectedBidAccountId(null); }}
-              >
-                <Text style={{ color: theme.textSub, fontWeight: 'bold' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalActionBtn, { backgroundColor: '#10B981' }]} onPress={addBid}>
-                <Text style={styles.primaryBtnText}>Save Bid</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* SELECT IPO FOR BID MODAL */}
-      <Modal visible={bidIpoPickerOpen} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg, maxHeight: '75%' }]}>
-            <Text style={[styles.subHeaderTitle, { color: theme.textMain }]}>Select IPO</Text>
-            <FlatList
-              data={ipos}
-              keyExtractor={item => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.pickerRow, { borderBottomColor: theme.border }]}
-                  onPress={() => { setSelectedBidIpo(item); setBidIpoPickerOpen(false); }}
-                >
-                  <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.name}</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status}</Text>
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={
-                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 20 }}>No IPOs loaded yet</Text>
-              }
-            />
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -1231,6 +1109,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 10
   },
+  logoAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  logoAvatarText: { color: '#fff', fontSize: 16, fontWeight: '900' },
   cardTitle: { fontSize: 16, fontWeight: '800' },
   cardDateRange: { fontSize: 11, marginTop: 3 },
   tagBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },

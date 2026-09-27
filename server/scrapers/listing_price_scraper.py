@@ -26,8 +26,10 @@ def clean_txt(t):
 
 def normalize_name(name: str) -> str:
     """'Moneyview Ltd. (Mainboard)' / 'Moneyview SME' / 'Moneyview' -> 'moneyview'
-    so GMP-list names and performance-tracker names can be matched reliably."""
-    n = re.sub(r"\(.*?\)", "", name)
+    so GMP-list names and performance-tracker names can be matched reliably.
+    Only the category tag is stripped — a real name segment like '(India)' in
+    'Adroit Industries (India)' is kept so both sides normalize the same way."""
+    n = re.sub(r"\((?:mainboard|sme|bse\s*sme|nse\s*sme)\)", "", name, flags=re.IGNORECASE)
     n = re.sub(r"\b(Ltd\.?|Limited|IPO|SME|BSE|NSE)\b", "", n, flags=re.IGNORECASE)
     n = re.sub(r"[^a-zA-Z0-9]", "", n).strip().lower()
     return n

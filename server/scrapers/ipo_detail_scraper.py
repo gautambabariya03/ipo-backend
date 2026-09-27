@@ -18,8 +18,10 @@ HEADERS = {
 
 
 def name_to_slug(ipo_name: str) -> str:
-    """'Moneyview Ltd. (Mainboard)' -> 'moneyview-ipo'"""
-    n = re.sub(r"\(.*?\)", "", ipo_name)  # drop "(Mainboard)" / "(SME)"
+    """'Moneyview Ltd. (Mainboard)' -> 'moneyview-ipo'
+    '(India)' jaisa company-name ka hissa bacha rehta hai — sirf category tag
+    (Mainboard)/(SME) hi hataya jaata hai."""
+    n = re.sub(r"\((?:mainboard|sme|bse\s*sme|nse\s*sme)\)", "", ipo_name, flags=re.IGNORECASE)
     n = re.sub(r"\b(Ltd\.?|Limited|IPO)\b", "", n, flags=re.IGNORECASE)
     n = re.sub(r"[^a-zA-Z0-9\s-]", "", n).strip().lower()
     n = re.sub(r"\s+", "-", n)

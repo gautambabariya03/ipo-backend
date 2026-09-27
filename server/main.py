@@ -219,6 +219,8 @@ async def check_allotment_batch_api(payload: AllotmentBatchRequest):
 @app.get("/api/notifications")
 def get_notifications(limit: int = Query(50, ge=1, le=100)):
     return NOTIFICATIONS[:limit]
+
+@app.get("/api/ipos/detail/{ipo_id}")
 async def get_ipo_detail(ipo_id: str):
     """Subscription breakdown, lead managers, registrar/contact info for one IPO.
     Lazy-fetched (only when the user opens VIEW), cached for 5 minutes."""

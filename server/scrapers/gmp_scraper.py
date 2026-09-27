@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import re
 from datetime import datetime, timezone, timedelta
 from scrapers.listing_price_scraper import fetch_listing_performance, normalize_name
+from scrapers.subscription_scraper import fetch_subscription_data
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -75,8 +76,16 @@ def fetch_live_gmp():
             if not raw_name or len(raw_name) < 2 or "NAME" in name_upper or "IPO NAME" in name_upper:
                 continue
 
-            open_str = clean_txt(cols[7].text)
-            close_str = clean_txt(cols[8].text)
+            open_str_raw = clean_txt(cols[7].text)
+            close_str_raw = clean_txt(cols[8].text)
+            # investorgain ke Open/Close cell me kabhi-kabhi ek chhota "GMP: X"
+            # badge bhi embedded hota hai (jaise "25-Sep GMP: 16") jab IPO close
+            # ho chuka ho — sirf date nikaalo, us extra badge text ko chhod do
+            date_pattern = re.compile(r"\d{1,2}-[A-Za-z]{3}")
+            open_match = date_pattern.search(open_str_raw)
+            close_match = date_pattern.search(close_str_raw)
+            open_str = open_match.group(0) if open_match else open_str_raw
+            close_str = close_match.group(0) if close_match else close_str_raw
 
             # Header Row को छोड़ें
             if "OPEN" in open_str.upper() or "CLOSE" in close_str.upper():
@@ -203,6 +212,21 @@ def fetch_live_gmp():
 
     except Exception as e:
         print(f"Scraper Error: {e}")
+
+    # OPEN aur CLOSED (recent) IPOs ke liye asli category-wise subscription
+    # (QIB/HNI/Retail/Total) fetch karo — ek hi extra request, sab items match
+    if any(item["status"] in ("OPEN", "CLOSED") for item in scraped_list):
+        try:
+            sub_data = fetch_subscription_data()
+            for item in scraped_list:
+                if item["status"] not in ("OPEN", "CLOSED"):
+                    continue
+                key = normalize_name(item["name"])
+                match = sub_data.get(key)
+                if match:
+                    item["subscription"] = match
+        except Exception as e:
+            print(f"Subscription Merge Error: {e}")
 
     # CLOSED IPOs ke liye asli Listing Price aur Current Price (LTP) fetch karo
     # (sirf ek extra request, sab CLOSED items ke liye ek saath match karke)
