@@ -19,6 +19,30 @@ MONTH_MAP = {
 def clean_txt(t):
     return re.sub(r'\s+', ' ', t).strip() if t else ""
 
+# investorgain jab IPO close ho chuka hota hai toh company naam ke saath ek
+# "Allotted" link bhi deta hai jo seedha us IPO ke ASLI registrar ki allotment
+# check page se jud-a hota hai. Us link ke domain se registrar ka naam nikalte hain.
+REGISTRAR_DOMAINS = {
+    "kfintech.com": "KFintech",
+    "mpms.mufg.com": "MUFG Intime (Link Intime)",
+    "linkintime.co.in": "Link Intime",
+    "maashitla.com": "Maashitla Management Services",
+    "bigshareonline.com": "Bigshare Services",
+    "cameoindia.com": "Cameo Corporate Services",
+    "purvashare.com": "Purva Sharegistry",
+    "skylinerta.com": "Skyline Financial Services",
+}
+
+def derive_registrar(url):
+    if not url:
+        return None, None
+    for domain, name in REGISTRAR_DOMAINS.items():
+        if domain in url:
+            return name, url
+    # Anjaan registrar ho toh bhi link toh de do, naam generic rakho
+    m = re.search(r"https?://(?:www\.)?([^/]+)", url)
+    return (m.group(1) if m else "Registrar"), url
+
 def parse_num(val_str):
     nums = re.findall(r'[-+]?\d+(?:\.\d+)?', val_str.replace(',', '').replace('₹', ''))
     return float(nums[0]) if nums else 0.0
@@ -71,6 +95,19 @@ def fetch_live_gmp():
             # 1. Company Name Anchor Tag से सुरक्षित रूप से लें
             a_tag = cols[0].find("a")
             raw_name = clean_txt(a_tag.text) if a_tag else clean_txt(cols[0].text)
+
+            # Agar IPO close ho chuka hai toh investorgain ek dusra "Allotted"
+            # link bhi deta hai jo seedha us IPO ke asli registrar se juda hota hai
+            all_links = cols[0].find_all("a")
+            registrar_url = None
+            for link in all_links:
+                href = link.get("href", "")
+                title = (link.get("title") or "").upper()
+                if "kfintech" in href or "mpms.mufg" in href or "linkintime" in href or \
+                   "maashitla" in href or "bigshareonline" in href or "CHECK ALLOTMENT" in title:
+                    registrar_url = href
+                    break
+            registrar_name, registrar_url = derive_registrar(registrar_url)
 
             name_upper = raw_name.upper()
             if not raw_name or len(raw_name) < 2 or "NAME" in name_upper or "IPO NAME" in name_upper:
@@ -207,7 +244,8 @@ def fetch_live_gmp():
                     "retail": "--"
                 },
                 "anchor": "Live Data",
-                "registrar": "Link Intime / KFin"
+                "registrar": registrar_name or "Not available yet",
+                "registrar_url": registrar_url,
             })
 
     except Exception as e:

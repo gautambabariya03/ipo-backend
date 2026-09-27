@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,7 +13,9 @@ import {
   TextInput,
   ScrollView,
   Share,
-  Alert
+  Alert,
+  Linking,
+  Animated
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,6 +62,23 @@ export default function App() {
   // Search
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Card flip (front: GMP/price info, back: live QIB/HNI/Retail subscription)
+  const [flippedIds, setFlippedIds] = useState({});
+  const flipAnims = useRef({}).current;
+  const getFlipAnim = (id) => {
+    if (!flipAnims[id]) flipAnims[id] = new Animated.Value(0);
+    return flipAnims[id];
+  };
+  const toggleFlip = (id) => {
+    const isFlipped = !!flippedIds[id];
+    Animated.timing(getFlipAnim(id), {
+      toValue: isFlipped ? 0 : 180,
+      duration: 400,
+      useNativeDriver: true,
+    }).start();
+    setFlippedIds(prev => ({ ...prev, [id]: !isFlipped }));
+  };
 
   // Accounts (Vault)
   const [accounts, setAccounts] = useState([]);
@@ -453,7 +472,44 @@ export default function App() {
                       <View style={[styles.tagBadge, item.category === 'SME' ? styles.tagSme : styles.tagMain]}>
                         <Text style={styles.tagBadgeText}>{item.category}</Text>
                       </View>
+                      <TouchableOpacity
+                        style={styles.flipIconBtn}
+                        onPress={() => toggleFlip(item.id)}
+                      >
+                        <Ionicons name="sync-outline" size={16} color={theme.textSub} />
+                      </TouchableOpacity>
                     </View>
+
+                    {flippedIds[item.id] && (
+                      <Animated.View
+                        style={[
+                          StyleSheet.absoluteFill,
+                          styles.cardBackOverlay,
+                          { backgroundColor: theme.cardBg, opacity: getFlipAnim(item.id).interpolate({ inputRange: [0, 180], outputRange: [0, 1] }) }
+                        ]}
+                      >
+                        <View style={styles.cardBackHeader}>
+                          <Text style={[styles.cardTitle, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
+                          <TouchableOpacity onPress={() => toggleFlip(item.id)}>
+                            <Ionicons name="close-circle" size={22} color={theme.textSub} />
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 8 }]}>LIVE SUBSCRIPTION (QIB / HNI / RETAIL)</Text>
+                        {['qib', 'hni', 'retail', 'total'].map(key => (
+                          <View key={key} style={[styles.darkTableRow, { borderColor: theme.border }]}>
+                            <Text style={[styles.tableTxt, { color: theme.textSub }]}>{key.toUpperCase()}</Text>
+                            <Text style={[styles.tableTxtBold, { color: key === 'total' ? '#10B981' : theme.textMain }]}>
+                              {item.subscription?.[key] || 'N/A'}
+                            </Text>
+                          </View>
+                        ))}
+                        {!item.subscription && (
+                          <Text style={{ color: theme.textSub, fontSize: 12, marginTop: 10 }}>
+                            Subscription data OPEN/CLOSED IPOs ke liye hi available hoti hai.
+                          </Text>
+                        )}
+                      </Animated.View>
+                    )}
 
                     <View style={[styles.gmpTerminalBox, { backgroundColor: theme.terminalBg, borderColor: theme.terminalBorder }]}>
                       <View>
@@ -539,7 +595,11 @@ export default function App() {
                             .then(detail => {
                               setSelectedIpo(prev => (prev && prev.id === item.id) ? {
                                 ...prev,
-                                registrar: detail?.registrar?.name || 'Not available',
+                                // item.registrar seedha investorgain se aata hai (zyada reliable,
+                                // hamesha available for closed IPOs) — choiceindia sirf fallback hai
+                                registrar: prev.registrar && prev.registrar !== 'Not available yet'
+                                  ? prev.registrar
+                                  : (detail?.registrar?.name || 'Not available'),
                                 lead_managers: (detail?.lead_managers && detail.lead_managers.length > 0)
                                   ? detail.lead_managers.join(', ')
                                   : 'Not available',
@@ -624,6 +684,18 @@ export default function App() {
             <Ionicons name="chevron-down" size={20} color={theme.textSub} />
           </TouchableOpacity>
 
+          {selectedAllotmentIpo?.registrar_url && (
+            <TouchableOpacity
+              style={styles.registrarLinkBtn}
+              onPress={() => Linking.openURL(selectedAllotmentIpo.registrar_url)}
+            >
+              <Ionicons name="open-outline" size={14} color="#3B82F6" />
+              <Text style={styles.registrarLinkText}>
+                Check directly on {selectedAllotmentIpo.registrar} (official site)
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.batchTriggerBtn}
             onPress={startBatchCheck}
@@ -646,7 +718,31 @@ export default function App() {
             keyExtractor={item => item.id}
             renderItem={({ item }) => {
               const res = allotmentResults[item.id];
-              const isAllotted = res?.status === 'ALLOTTED';
+              // User ke exact spec ke hisaab se: ALLOTTED = green box, NOT
+              // ALLOTTED = red box, baaki sab (not applied / check failed /
+              // scan nahi hua) = neutral grey box
+              let pillBg = styles.statusNotApplied;
+              let pillTextColor = theme.textSub;
+              let label = 'AWAITING SCAN';
+              if (res) {
+                if (res.status === 'ALLOTTED') {
+                  pillBg = { backgroundColor: 'rgba(16,185,129,0.15)' };
+                  pillTextColor = '#10B981';
+                  label = 'ALLOTTED';
+                } else if (res.status === 'NON_ALLOTTEE') {
+                  pillBg = { backgroundColor: 'rgba(239,68,68,0.15)' };
+                  pillTextColor = '#EF4444';
+                  label = 'NOT ALLOTTED';
+                } else if (res.status === 'NOT_APPLIED') {
+                  label = 'NOT APPLIED';
+                } else if (res.status === 'CHECK_FAILED') {
+                  pillBg = { backgroundColor: 'rgba(245,158,11,0.15)' };
+                  pillTextColor = '#F59E0B';
+                  label = 'CHECK FAILED';
+                } else {
+                  label = res.shares || res.status;
+                }
+              }
 
               return (
                 <View style={[styles.allotCardItem, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
@@ -656,15 +752,9 @@ export default function App() {
                   </View>
 
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={[
-                      styles.statusPill,
-                      isAllotted ? styles.statusAllotted : styles.statusNotApplied
-                    ]}>
-                      <Text style={[
-                        styles.statusPillText,
-                        isAllotted ? { color: '#10B981' } : { color: theme.textSub }
-                      ]}>
-                        {res ? res.shares : 'Awaiting Scan'}
+                    <View style={[styles.statusPill, pillBg]}>
+                      <Text style={[styles.statusPillText, { color: pillTextColor }]}>
+                        {label}
                       </Text>
                     </View>
 
@@ -1119,6 +1209,18 @@ const styles = StyleSheet.create({
   },
   logoAvatarText: { color: '#fff', fontSize: 16, fontWeight: '900' },
   cardTitle: { fontSize: 16, fontWeight: '800' },
+  flipIconBtn: { padding: 4, marginLeft: 8 },
+  cardBackOverlay: {
+    padding: 16,
+    borderRadius: 14,
+    zIndex: 10,
+  },
+  cardBackHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   cardDateRange: { fontSize: 11, marginTop: 3 },
   tagBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   tagMain: { backgroundColor: '#1E3A8A' },
@@ -1239,6 +1341,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12
   },
+  registrarLinkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  registrarLinkText: { color: '#3B82F6', fontSize: 12, fontWeight: '700', marginLeft: 6 },
   allotCardItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
