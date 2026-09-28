@@ -1,16 +1,27 @@
 {
   "expo": {
-    "name": "IPO GMP Tracker",
+    "name": "GB",
     "slug": "ipo-gmp-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "backgroundColor": "#0B0F14",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0B0F14"
+    },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.gautambabariya.ipogmptracker",
-      "versionCode": 1
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0F14"
+      }
     },
     "extra": {
       "eas": {

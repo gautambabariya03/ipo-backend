@@ -68,7 +68,7 @@ def parse_date(date_str, default_year=2026):
     return None
 
 def fetch_live_gmp():
-    url = f"https://www.investorgain.com/report/ipo-gmp-live/331/?v={int(datetime.now().timestamp())}"
+    url = f"https://www.investorgain.com/report/live-ipo-gmp/331/all/?v={int(datetime.now().timestamp())}"
     scraped_list = []
     seen_ids = set()
 

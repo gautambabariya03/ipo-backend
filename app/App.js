@@ -15,7 +15,8 @@ import {
   Share,
   Alert,
   Linking,
-  Animated
+  Animated,
+  Image
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +31,40 @@ function avatarColor(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+// Company logo: pehle real favicon try karta hai (naam se guess kiya gaya
+// domain), agar load fail ho ya galat/generic icon aaye toh letter-avatar pe
+// fallback. NOTE: ye best-effort hai — naam se domain guess karna hamesha
+// accurate nahi hoga, kuch companies ke liye letter-avatar hi dikhega.
+function guessDomain(name) {
+  let n = name.replace(/\(.*?\)/g, '');
+  n = n.replace(/\b(Ltd\.?|Limited|IPO|SME|BSE|NSE|India)\b/gi, '');
+  n = n.replace(/[^a-zA-Z0-9\s]/g, '').trim().toLowerCase();
+  const first = n.split(/\s+/)[0];
+  return first && first.length > 2 ? `${first}.com` : null;
+}
+
+function CompanyLogo({ name, bgColor }) {
+  const [failed, setFailed] = useState(false);
+  const domain = guessDomain(name);
+  if (failed || !domain) {
+    return (
+      <View style={[styles.logoAvatar, { backgroundColor: bgColor }]}>
+        <Text style={styles.logoAvatarText}>{name.trim().charAt(0).toUpperCase()}</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={[styles.logoAvatar, { backgroundColor: '#fff', overflow: 'hidden' }]}>
+      <Image
+        source={{ uri: `https://www.google.com/s2/favicons?sz=128&domain=${domain}` }}
+        style={{ width: 24, height: 24 }}
+        resizeMode="contain"
+        onError={() => setFailed(true)}
+      />
+    </View>
+  );
 }
 
 export default function App() {
@@ -63,14 +98,31 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Card flip (front: GMP/price info, back: live QIB/HNI/Retail subscription)
+  // App-open intro animation (GB logo fade + scale in, then fades out into the IPO list)
+  const [showIntro, setShowIntro] = useState(true);
+  const introOpacity = useRef(new Animated.Value(0)).current;
+  const introScale = useRef(new Animated.Value(0.8)).current;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(introOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.timing(introScale, { toValue: 1, duration: 350, useNativeDriver: true }),
+      ]),
+      Animated.delay(500),
+      Animated.timing(introOpacity, { toValue: 0, duration: 350, useNativeDriver: true }),
+    ]).start(() => setShowIntro(false));
+  }, []);
+
+  // Card flip (front: GMP/price info, back: live QIB/HNI/Retail subscription + registrar)
   const [flippedIds, setFlippedIds] = useState({});
+  const [detailCache, setDetailCache] = useState({}); // per-IPO registrar/lead-manager cache
   const flipAnims = useRef({}).current;
   const getFlipAnim = (id) => {
     if (!flipAnims[id]) flipAnims[id] = new Animated.Value(0);
     return flipAnims[id];
   };
-  const toggleFlip = (id) => {
+  const toggleFlip = (item) => {
+    const id = item.id;
     const isFlipped = !!flippedIds[id];
     Animated.timing(getFlipAnim(id), {
       toValue: isFlipped ? 0 : 180,
@@ -78,6 +130,27 @@ export default function App() {
       useNativeDriver: true,
     }).start();
     setFlippedIds(prev => ({ ...prev, [id]: !isFlipped }));
+
+    // Pehli baar flip hone par registrar/lead-manager detail fetch karo (VIEW
+    // INSIGHTS button hata diya gaya hai — ab flip-back hi ye data dikhata hai)
+    if (!isFlipped && !detailCache[id]) {
+      fetch(`${BASE_URL}/api/ipos/detail/${id}`)
+        .then(r => r.json())
+        .then(detail => {
+          setDetailCache(prev => ({
+            ...prev,
+            [id]: {
+              registrar: item.registrar && item.registrar !== 'Not available yet'
+                ? item.registrar
+                : (detail?.registrar?.name || 'Not available'),
+              lead_managers: (detail?.lead_managers && detail.lead_managers.length > 0)
+                ? detail.lead_managers.join(', ')
+                : 'Not available',
+            }
+          }));
+        })
+        .catch(() => {});
+    }
   };
 
   // Accounts (Vault)
@@ -349,6 +422,20 @@ export default function App() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={theme.headerBg} />
 
+      {showIntro && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            styles.introOverlay,
+            { opacity: introOpacity, zIndex: 999 }
+          ]}
+        >
+          <Animated.Text style={[styles.introLogo, { transform: [{ scale: introScale }] }]}>GB</Animated.Text>
+          <Text style={styles.introSub}>POWERED BY GB</Text>
+        </Animated.View>
+      )}
+
       {/* TOP HEADER */}
       <View style={[styles.topBar, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -356,8 +443,7 @@ export default function App() {
             <View style={[styles.radarDot, { opacity: blinkOn ? 1 : 0.2 }]} />
           </View>
           <View>
-            <Text style={[styles.appName, { color: theme.textMain }]}>APEX IPO</Text>
-            <Text style={styles.appSub}>TERMINAL PRO</Text>
+            <Text style={[styles.appName, { color: theme.textMain }]}>GB</Text>
           </View>
         </View>
 
@@ -462,9 +548,7 @@ export default function App() {
                 return (
                   <View style={[styles.cardContainer, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
                     <View style={styles.cardHeader}>
-                      <View style={[styles.logoAvatar, { backgroundColor: avatarColor(item.name) }]}>
-                        <Text style={styles.logoAvatarText}>{item.name.trim().charAt(0).toUpperCase()}</Text>
-                      </View>
+                      <CompanyLogo name={item.name} bgColor={avatarColor(item.name)} />
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.cardTitle, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
                         <Text style={[styles.cardDateRange, { color: theme.textSub, marginTop: 3 }]}>📅 {item.date_range}</Text>
@@ -474,7 +558,7 @@ export default function App() {
                       </View>
                       <TouchableOpacity
                         style={styles.flipIconBtn}
-                        onPress={() => toggleFlip(item.id)}
+                        onPress={() => toggleFlip(item)}
                       >
                         <Ionicons name="sync-outline" size={16} color={theme.textSub} />
                       </TouchableOpacity>
@@ -490,7 +574,7 @@ export default function App() {
                       >
                         <View style={styles.cardBackHeader}>
                           <Text style={[styles.cardTitle, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
-                          <TouchableOpacity onPress={() => toggleFlip(item.id)}>
+                          <TouchableOpacity onPress={() => toggleFlip(item)}>
                             <Ionicons name="close-circle" size={22} color={theme.textSub} />
                           </TouchableOpacity>
                         </View>
@@ -508,6 +592,13 @@ export default function App() {
                             Subscription data OPEN/CLOSED IPOs ke liye hi available hoti hai.
                           </Text>
                         )}
+                        <Text style={[styles.specKey, { color: theme.specKey, marginTop: 14, marginBottom: 6 }]}>REGISTRAR & LEAD MANAGER</Text>
+                        <Text style={{ color: theme.textMain, fontSize: 12, marginBottom: 4 }}>
+                          {detailCache[item.id]?.registrar || item.registrar || 'Loading...'}
+                        </Text>
+                        <Text style={{ color: theme.textSub, fontSize: 11 }}>
+                          {detailCache[item.id]?.lead_managers || '—'}
+                        </Text>
                       </Animated.View>
                     )}
 
@@ -584,47 +675,25 @@ export default function App() {
                     </View>
 
                     <View style={styles.actionRow}>
-                      <TouchableOpacity
-                        style={[styles.detailsBtn, { backgroundColor: theme.innerBox, borderColor: theme.border }]}
-                        onPress={() => {
-                          setSelectedIpo(item);
-                          setDetailModalOpen(true);
-                          setDetailLoading(true);
-                          fetch(`${BASE_URL}/api/ipos/detail/${item.id}`)
-                            .then(r => r.json())
-                            .then(detail => {
-                              setSelectedIpo(prev => (prev && prev.id === item.id) ? {
-                                ...prev,
-                                // item.registrar seedha investorgain se aata hai (zyada reliable,
-                                // hamesha available for closed IPOs) — choiceindia sirf fallback hai
-                                registrar: prev.registrar && prev.registrar !== 'Not available yet'
-                                  ? prev.registrar
-                                  : (detail?.registrar?.name || 'Not available'),
-                                lead_managers: (detail?.lead_managers && detail.lead_managers.length > 0)
-                                  ? detail.lead_managers.join(', ')
-                                  : 'Not available',
-                              } : prev);
-                            })
-                            .catch(() => {})
-                            .finally(() => setDetailLoading(false));
-                        }}
-                      >
-                        <Text style={[styles.detailsBtnText, { color: theme.textMain }]}>VIEW INSIGHTS</Text>
-                      </TouchableOpacity>
-
                       <TouchableOpacity style={styles.shareIconBtn}>
                         <Ionicons name="share-social-outline" size={16} color="#38BDF8" />
                       </TouchableOpacity>
 
                       {isClosed ? (
                         <TouchableOpacity
-                          style={[styles.primaryActionBtn, { backgroundColor: '#10B981' }]}
+                          style={[styles.primaryActionBtn, { backgroundColor: '#10B981', flex: 1 }]}
                           onPress={() => {
-                            setSelectedAllotmentIpo(item);
-                            setActiveTab('Allotment');
+                            if (item.registrar_url) {
+                              Linking.openURL(item.registrar_url);
+                            } else {
+                              setSelectedAllotmentIpo(item);
+                              setActiveTab('Allotment');
+                            }
                           }}
                         >
-                          <Text style={styles.primaryBtnText}>CHECK ALLOTMENT</Text>
+                          <Text style={styles.primaryBtnText}>
+                            {item.registrar_url ? `CHECK ON ${item.registrar?.toUpperCase() || 'REGISTRAR'}` : 'CHECK ALLOTMENT'}
+                          </Text>
                         </TouchableOpacity>
                       ) : null}
                     </View>
@@ -733,14 +802,10 @@ export default function App() {
                   pillBg = { backgroundColor: 'rgba(239,68,68,0.15)' };
                   pillTextColor = '#EF4444';
                   label = 'NOT ALLOTTED';
-                } else if (res.status === 'NOT_APPLIED') {
-                  label = 'NOT APPLIED';
-                } else if (res.status === 'CHECK_FAILED') {
-                  pillBg = { backgroundColor: 'rgba(245,158,11,0.15)' };
-                  pillTextColor = '#F59E0B';
-                  label = 'CHECK FAILED';
                 } else {
-                  label = res.shares || res.status;
+                  // NOT_APPLIED ya CHECK_FAILED (registrar response nahi mila)
+                  // dono hi case mein neutral "NOT APPLIED" dikhao
+                  label = 'NOT APPLIED';
                 }
               }
 
@@ -936,6 +1001,7 @@ export default function App() {
             <FlatList
               data={notifications}
               keyExtractor={(item, idx) => `${item.ipo_id}-${item.time}-${idx}`}
+              style={{ maxHeight: 450 }}
               ListEmptyComponent={
                 <Text style={{ color: theme.textSub, textAlign: 'center', padding: 24 }}>
                   Koi notification abhi tak nahi hai
@@ -980,6 +1046,8 @@ export default function App() {
             <FlatList
               data={searchResults}
               keyExtractor={item => item.id}
+              style={{ maxHeight: 420 }}
+              keyboardShouldPersistTaps="handled"
               ListEmptyComponent={
                 <Text style={{ color: theme.textSub, textAlign: 'center', padding: 24 }}>
                   {searchQuery.trim() ? 'No matching IPO found' : 'Type a company name to search'}
@@ -1085,6 +1153,7 @@ export default function App() {
             <FlatList
               data={allotmentEligibleIpos}
               keyExtractor={item => item.id}
+              style={{ maxHeight: 420 }}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[styles.pickerRow, { borderBottomColor: theme.border }]}
@@ -1113,6 +1182,13 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  introOverlay: {
+    backgroundColor: '#0B0F14',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  introLogo: { fontSize: 64, fontWeight: '900', color: '#10B981', letterSpacing: 2 },
+  introSub: { fontSize: 12, fontWeight: '700', color: '#6B7280', letterSpacing: 3, marginTop: 8 },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1188,10 +1264,15 @@ const styles = StyleSheet.create({
   chipTextActive: { color: '#10B981' },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   cardContainer: {
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -1208,7 +1289,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   logoAvatarText: { color: '#fff', fontSize: 16, fontWeight: '900' },
-  cardTitle: { fontSize: 16, fontWeight: '800' },
+  cardTitle: { fontSize: 17, fontWeight: '800', letterSpacing: 0.2 },
   flipIconBtn: { padding: 4, marginLeft: 8 },
   cardBackOverlay: {
     padding: 16,
@@ -1290,11 +1371,16 @@ const styles = StyleSheet.create({
   primaryActionBtn: {
     flex: 1,
     backgroundColor: '#2563EB',
-    paddingVertical: 9,
-    borderRadius: 8,
-    alignItems: 'center'
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  primaryBtnText: { fontSize: 11, fontWeight: '900', color: '#FFF', letterSpacing: 0.5 },
+  primaryBtnText: { fontSize: 12, fontWeight: '900', color: '#FFF', letterSpacing: 0.6 },
   accountHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1336,10 +1422,15 @@ const styles = StyleSheet.create({
   selectedIpoName: { fontSize: 14, fontWeight: '800', marginTop: 2 },
   batchTriggerBtn: {
     backgroundColor: '#10B981',
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderRadius: 10,
     alignItems: 'center',
-    marginBottom: 12
+    marginBottom: 12,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
   },
   registrarLinkBtn: {
     flexDirection: 'row',
