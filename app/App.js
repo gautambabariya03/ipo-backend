@@ -17,7 +17,8 @@ import {
   Linking,
   Animated,
   Image,
-  Platform
+  Platform,
+  BackHandler
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -84,6 +85,7 @@ function CompanyLogo({ name, bgColor }) {
 export default function App() {
   const [ipos, setIpos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   // Theme State: Dark / Light
@@ -190,6 +192,22 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, []);
+
+  // Android ka hardware "back" button — is app me real navigation stack nahi
+  // hai (sirf tab-switching), isliye default back button seedha app close kar
+  // deta tha. Ab: agar IPO tab pe nahi hain, toh back IPO tab pe le jaayega;
+  // IPO tab pe hi ho toh normal behavior (app minimize) hoga.
+  useEffect(() => {
+    const onBackPress = () => {
+      if (activeTab !== 'IPO') {
+        setActiveTab('IPO');
+        return true; // handled — app close nahi hogi
+      }
+      return false; // IPO tab pe already hain, default behavior chalne do
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [activeTab]);
 
   // REAL-TIME AUTO REFRESH: backend re-scrapes investorgain every 10 min in the
   // background, but that new data only reaches the screen if the app asks for
@@ -341,12 +359,14 @@ export default function App() {
       const resp = await fetch(API_URL);
       const data = await resp.json();
       setIpos(data);
+      setFetchError(null);
       if (!selectedAllotmentIpo) {
         const firstEligible = data.find(x => x.status === 'CLOSED' && x.allotment_declared);
         if (firstEligible) setSelectedAllotmentIpo(firstEligible);
       }
     } catch (e) {
       console.log('Fetch Error:', e);
+      setFetchError('server_unreachable');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -585,12 +605,36 @@ export default function App() {
               <ActivityIndicator size="large" color="#10B981" />
               <Text style={{ color: theme.textSub, marginTop: 12, fontSize: 13 }}>Syncing Live Market GMP...</Text>
             </View>
+          ) : fetchError && ipos.length === 0 ? (
+            <View style={styles.centerBox}>
+              <Ionicons name="cloud-offline-outline" size={48} color={theme.textSub} />
+              <Text style={{ color: theme.textMain, marginTop: 14, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>
+                Server abhi jaag raha hai
+              </Text>
+              <Text style={{ color: theme.textSub, marginTop: 6, fontSize: 12, textAlign: 'center', paddingHorizontal: 30 }}>
+                Free hosting server kuch der inactive rehne par so jaata hai. Pehli request ko 30-50 second lag sakte hain.
+              </Text>
+              <TouchableOpacity
+                style={[styles.batchTriggerBtn, { marginTop: 18, paddingHorizontal: 30 }]}
+                onPress={() => { setLoading(true); fetchLiveIPOs(); }}
+              >
+                <Text style={styles.primaryBtnText}>RETRY</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <FlatList
               data={displayList}
               keyExtractor={item => item.id}
               contentContainerStyle={{ padding: 12, paddingBottom: 25 }}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchLiveIPOs(); }} tintColor="#10B981" />}
+              ListEmptyComponent={
+                <View style={[styles.centerBox, { marginTop: 60 }]}>
+                  <Ionicons name="file-tray-outline" size={40} color={theme.textSub} />
+                  <Text style={{ color: theme.textSub, marginTop: 10, fontSize: 13 }}>
+                    Is filter me abhi koi IPO nahi hai
+                  </Text>
+                </View>
+              }
               renderItem={({ item }) => {
                 const hasGmp = item.gmp > 0;
                 const isClosed = item.status === 'CLOSED';
@@ -786,6 +830,16 @@ export default function App() {
       {/* ALLOTMENT TAB */}
       {activeTab === 'Allotment' && (
         <View style={{ flex: 1, padding: 14 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', padding: 6 }}
+              onPress={() => setActiveTab('IPO')}
+            >
+              <Ionicons name="close-circle" size={20} color={theme.textSub} />
+              <Text style={{ color: theme.textSub, marginLeft: 4, fontSize: 12, fontWeight: '700' }}>CLOSE</Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
             style={[styles.ipoSelectBtn, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
             onPress={() => setIpoPickerOpen(true)}
