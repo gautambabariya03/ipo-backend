@@ -7,6 +7,7 @@
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
     "backgroundColor": "#0B0F14",
+    "plugins": ["expo-notifications"],
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "cover",

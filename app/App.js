@@ -16,10 +16,24 @@ import {
   Alert,
   Linking,
   Animated,
-  Image
+  Image,
+  Platform
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
+
+// App band/background/killed — kisi bhi state me notification aaye toh alert
+// dikhao (mobile ke home-screen/lock-screen pe bhi, jab app open na ho)
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: true,
+  }),
+});
 const BASE_URL = 'https://ipo-backend-fpjo.onrender.com';
 const API_URL = `${BASE_URL}/api/ipos/live`;
 const ALLOTMENT_API = `${BASE_URL}/api/allotment/check-batch`;
@@ -83,11 +97,6 @@ export default function App() {
 
   // Visible Blinking Dot Pulse
   const [blinkOn, setBlinkOn] = useState(true);
-
-  // Modals
-  const [selectedIpo, setSelectedIpo] = useState(null);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
 
   // Notifications (new IPO / GMP change / status change feed)
   const [notifications, setNotifications] = useState([]);
@@ -177,6 +186,7 @@ export default function App() {
     loadSavedTheme();
     fetchLiveIPOs();
     fetchNotifications();
+    registerForPushNotifications();
 
     return () => clearInterval(timer);
   }, []);
@@ -204,6 +214,46 @@ export default function App() {
       setUnreadNotifCount(unread);
     } catch (e) {
       console.log('Notification Fetch Error:', e);
+    }
+  };
+
+  // Mobile home-screen/lock-screen push notifications (real OS push, not just
+  // the in-app bell). NOTE: SDK 53+ Expo Go doesn't support push — a
+  // development/production build (eas build) is required to actually see this.
+  const registerForPushNotifications = async () => {
+    try {
+      if (!Device.isDevice) return; // simulators/emulators can't get push tokens
+
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Default',
+          importance: Notifications.AndroidImportance.MAX,
+        });
+      }
+
+      const existing = await Notifications.getPermissionsAsync();
+      let finalStatus = existing.status;
+      if (finalStatus !== 'granted') {
+        const requested = await Notifications.requestPermissionsAsync();
+        finalStatus = requested.status;
+      }
+      if (finalStatus !== 'granted') return;
+
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+      if (!projectId) return;
+
+      const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+      const pushToken = tokenResponse.data;
+
+      // Backend ko token bhejo taaki naya IPO / GMP change / status change
+      // hone par real push bheja ja sake (server-side, Expo push service se)
+      await fetch(`${BASE_URL}/api/register-push-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: pushToken }),
+      }).catch(() => {});
+    } catch (e) {
+      console.log('Push Registration Error:', e);
     }
   };
 
@@ -675,10 +725,6 @@ export default function App() {
                     </View>
 
                     <View style={styles.actionRow}>
-                      <TouchableOpacity style={styles.shareIconBtn}>
-                        <Ionicons name="share-social-outline" size={16} color="#38BDF8" />
-                      </TouchableOpacity>
-
                       {isClosed ? (
                         <TouchableOpacity
                           style={[styles.primaryActionBtn, { backgroundColor: '#10B981', flex: 1 }]}
@@ -934,51 +980,6 @@ export default function App() {
               onPress={() => setSettingsModalOpen(false)}
             >
               <Text style={styles.primaryBtnText}>DONE</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* FINANCIAL DETAILS MODAL */}
-      <Modal visible={detailModalOpen} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg }]}>
-            <View style={styles.sheetTop}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetTitle, { color: theme.textMain }]}>{selectedIpo?.name}</Text>
-                <Text style={[styles.specKey, { color: theme.specKey }]}>DETAILED ALLOCATION & SUBSCRIPTION</Text>
-              </View>
-              <TouchableOpacity onPress={() => setDetailModalOpen(false)}>
-                <Ionicons name="close-circle" size={24} color={theme.textSub} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={[styles.subHeaderTitle, { color: theme.textMain }]}>Live Subscription Multipliers</Text>
-              <View style={[styles.darkTable, { borderColor: theme.border }]}>
-                <View style={[styles.darkTableRowHead, { backgroundColor: theme.innerBox }]}>
-                  <Text style={[styles.tableHeadTxt, { color: theme.textSub }]}>Category</Text>
-                  <Text style={[styles.tableHeadTxt, { color: theme.textSub }]}>Times (x)</Text>
-                </View>
-                <View style={[styles.darkTableRow, { borderColor: theme.border }]}><Text style={[styles.tableTxt, { color: theme.textSub }]}>QIB (Institutional)</Text><Text style={[styles.tableTxtBold, { color: theme.textMain }]}>{selectedIpo?.subscription?.qib || 'N/A'}</Text></View>
-                <View style={[styles.darkTableRow, { borderColor: theme.border }]}><Text style={[styles.tableTxt, { color: theme.textSub }]}>HNI / NII</Text><Text style={[styles.tableTxtBold, { color: theme.textMain }]}>{selectedIpo?.subscription?.hni || 'N/A'}</Text></View>
-                <View style={[styles.darkTableRow, { borderColor: theme.border }]}><Text style={[styles.tableTxt, { color: theme.textSub }]}>Retail Public</Text><Text style={[styles.tableTxtBold, { color: theme.textMain }]}>{selectedIpo?.subscription?.retail || 'N/A'}</Text></View>
-                <View style={[styles.darkTableRow, { backgroundColor: theme.terminalBg, borderColor: theme.border }]}><Text style={[styles.tableTxtBold, { color: '#10B981' }]}>Total Subscription</Text><Text style={[styles.tableTxtBold, { color: '#10B981' }]}>{selectedIpo?.subscription?.total || 'N/A'}</Text></View>
-              </View>
-
-              <Text style={[styles.subHeaderTitle, { color: theme.textMain }]}>Registrar & Legal Info</Text>
-              {detailLoading && (
-                <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>Loading live details…</Text>
-              )}
-              <View style={[styles.legalInfoBox, { backgroundColor: theme.innerBox }]}>
-                <View style={styles.specRow}><Text style={[styles.specKey, { color: theme.specKey }]}>REGISTRAR</Text><Text style={[styles.legalVal, { color: theme.textMain }]}>{selectedIpo?.registrar || '--'}</Text></View>
-                <View style={styles.specRow}><Text style={[styles.specKey, { color: theme.specKey }]}>LEAD MANAGER(S)</Text><Text style={[styles.legalVal, { color: theme.textMain }]}>{selectedIpo?.lead_managers || '--'}</Text></View>
-                <View style={styles.specRow}><Text style={[styles.specKey, { color: theme.specKey }]}>ANCHOR ALLOCATION</Text><Text style={[styles.legalVal, { color: theme.textMain }]}>{selectedIpo?.anchor || '--'}</Text></View>
-              </View>
-            </ScrollView>
-
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setDetailModalOpen(false)}>
-              <Text style={styles.primaryBtnText}>CLOSE INSIGHTS</Text>
             </TouchableOpacity>
           </View>
         </View>

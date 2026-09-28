@@ -2,6 +2,7 @@ import sys
 import os
 import asyncio
 import json
+import requests
 from typing import List, Optional
 from datetime import datetime
 
@@ -40,6 +41,9 @@ class AllotmentBatchRequest(BaseModel):
     ipo_name: str
     lot_size: int = 50
     accounts: List[AccountItem]
+
+class PushTokenRequest(BaseModel):
+    token: str
 
 # ----------------- In-memory State & Cache -----------------
 CACHED_IPOS = []
@@ -110,6 +114,45 @@ def add_notification(ntype, message, ipo_id=None, ipo_name=None):
     })
     NOTIFICATIONS = NOTIFICATIONS[:MAX_NOTIFICATIONS]
     save_notifications_to_disk()
+    send_push_to_all(ntype.replace("_", " ").title(), message)
+
+# ----------------- Real mobile push notifications (Expo push service) -----------------
+# Har device ka Expo push token yahan store hota hai (register hone par
+# /api/register-push-token se aata hai). Naya notification event hote hi
+# in sab tokens ko ek real push bheja jaata hai — mobile home/lock-screen
+# pe dikhega, app band ho ya khula.
+PUSH_TOKENS = []
+PUSH_TOKENS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "push_tokens.json")
+
+def load_push_tokens_from_disk():
+    global PUSH_TOKENS
+    if os.path.exists(PUSH_TOKENS_FILE):
+        try:
+            with open(PUSH_TOKENS_FILE, "r", encoding="utf-8") as f:
+                PUSH_TOKENS = json.load(f)
+        except Exception as e:
+            print(f"Push tokens disk load error: {e}")
+
+def save_push_tokens_to_disk():
+    try:
+        with open(PUSH_TOKENS_FILE, "w", encoding="utf-8") as f:
+            json.dump(PUSH_TOKENS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Push tokens disk save error: {e}")
+
+def send_push_to_all(title, body):
+    if not PUSH_TOKENS:
+        return
+    try:
+        messages = [{"to": t, "sound": "default", "title": title, "body": body} for t in PUSH_TOKENS]
+        requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=messages,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"Push Send Error: {e}")
 
 def detect_changes_and_notify(old_ipos, new_ipos):
     """Purane aur naye scrape ke beech compare karke notifications banata hai."""
@@ -181,6 +224,7 @@ async def on_startup():
     print("Initial server startup: Loading live IPO dataset...")
     load_from_disk()
     load_notifications_from_disk()
+    load_push_tokens_from_disk()
     await sync_data_safe()
     asyncio.create_task(auto_updater_task())
 
@@ -219,6 +263,16 @@ async def check_allotment_batch_api(payload: AllotmentBatchRequest):
 @app.get("/api/notifications")
 def get_notifications(limit: int = Query(50, ge=1, le=100)):
     return NOTIFICATIONS[:limit]
+
+@app.post("/api/register-push-token")
+def register_push_token(payload: PushTokenRequest):
+    """Mobile app apna Expo push token yahan register karta hai — isse naya
+    IPO / GMP change / status change hone par real push mil sakega, chahe
+    app band ho ya background mein."""
+    if payload.token and payload.token not in PUSH_TOKENS:
+        PUSH_TOKENS.append(payload.token)
+        save_push_tokens_to_disk()
+    return {"success": True, "total_devices": len(PUSH_TOKENS)}
 
 @app.get("/api/ipos/detail/{ipo_id}")
 async def get_ipo_detail(ipo_id: str):
