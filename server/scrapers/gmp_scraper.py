@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import re
+import time
 from datetime import datetime, timezone, timedelta
 from scrapers.listing_price_scraper import fetch_listing_performance, normalize_name
 from scrapers.subscription_scraper import fetch_subscription_data
@@ -68,23 +69,52 @@ def parse_date(date_str, default_year=2026):
     return None
 
 def fetch_live_gmp():
-    url = f"https://investorgain.com/report/live-ipo-gmp/331/?v={int(datetime.now().timestamp())}"
+    url_base = "https://investorgain.com/report/live-ipo-gmp/331/"
     scraped_list = []
     seen_ids = set()
 
     ist = timezone(timedelta(hours=5, minutes=30))
     today = datetime.now(ist).date()
 
+    table = None
+    last_error = None
+
+    # investorgain kabhi-kabhi ek "Loading..." wala khaali shell bhej deta hai
+    # (jab tak unki apni site poora render nahi karti) — isliye 3 baar try
+    # karte hain, thodi delay ke saath, pehle try me fail ho toh
+    for attempt in range(3):
+        try:
+            url = f"{url_base}?v={int(datetime.now().timestamp())}"
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            if resp.status_code != 200:
+                last_error = f"HTTP {resp.status_code}"
+                time.sleep(2)
+                continue
+
+            if "Loading..." in resp.text and "<table" not in resp.text.lower():
+                last_error = "Page returned JS-loading placeholder, no table yet"
+                time.sleep(2)
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            found_table = soup.find("table")
+            if not found_table or len(found_table.find_all("tr")) < 2:
+                last_error = "Table empty/not found in response"
+                time.sleep(2)
+                continue
+
+            table = found_table
+            break
+
+        except Exception as e:
+            last_error = str(e)
+            time.sleep(2)
+
+    if table is None:
+        print(f"GMP Scraper: all retries failed — {last_error}")
+        return []
+
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
-            return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        table = soup.find("table")
-        if not table:
-            return []
-
         rows = table.find_all("tr")
 
         for idx, row in enumerate(rows):
