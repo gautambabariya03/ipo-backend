@@ -229,7 +229,7 @@ async def on_startup():
     asyncio.create_task(auto_updater_task())
 
 # ----------------- Endpoints -----------------
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {
         "message": "IPO Live Backend is Running",
