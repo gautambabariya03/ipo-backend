@@ -35,7 +35,7 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true,
   }),
 });
-const BASE_URL = 'http://10.65.46.7:8000';
+const BASE_URL = 'https://ipo-backend-fpjo.onrender.com';
 const API_URL = `${BASE_URL}/api/ipos/live`;
 const ALLOTMENT_API = `${BASE_URL}/api/allotment/check-batch`;
 
