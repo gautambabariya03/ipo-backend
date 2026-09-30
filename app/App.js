@@ -903,9 +903,14 @@ export default function App() {
                   pillTextColor = '#EF4444';
                   label = 'NOT ALLOTTED';
                 } else {
-                  // NOT_APPLIED ya CHECK_FAILED (registrar response nahi mila)
-                  // dono hi case mein neutral "NOT APPLIED" dikhao
-                  label = 'NOT APPLIED';
+                  // UNVERIFIED ya CHECK_FAILED — humara automated check
+                  // "ALL" generic company-id use karta hai (real registrar
+                  // per-IPO company + CAPTCHA maangta hai), isliye "record
+                  // nahi mila" ka matlab pakka "apply nahi kiya" nahi hai —
+                  // isliye honest label: confidently NOT APPLIED mat bolo
+                  pillBg = { backgroundColor: 'rgba(245,158,11,0.12)' };
+                  pillTextColor = '#F59E0B';
+                  label = 'COULD NOT VERIFY';
                 }
               }
 
@@ -1250,6 +1255,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    paddingTop: (Platform.OS === 'android' ? StatusBar.currentHeight || 24 : 12) + 12,
     borderBottomWidth: 1
   },
   radarIconBox: {

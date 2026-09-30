@@ -10,6 +10,7 @@ Name | Total | QIB | SHNI | BHNI | NII | RII | Anchor | IPO Size | IPO Price | P
 import requests
 from bs4 import BeautifulSoup
 import re
+import time
 from scrapers.listing_price_scraper import normalize_name
 
 HEADERS = {
@@ -39,15 +40,40 @@ def fetch_subscription_data():
     currently carrying live subscription data (open, or closed-but-recent)."""
     url = "https://www.investorgain.com/report/ipo-subscription-live/333/all/"
     results = {}
+    rows = []
+
+    # investorgain kabhi-kabhi "Loading..." wala JS-shell bhej deta hai (jaisa
+    # main GMP page mein hota hai) — isliye yahan bhi retry karte hain
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            if resp.status_code != 200:
+                time.sleep(2)
+                continue
+
+            if "Loading..." in resp.text and "<table" not in resp.text.lower():
+                time.sleep(2)
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            table = soup.find("table")
+            found_rows = table.find_all("tr") if table else soup.find_all("tr")
+            if len(found_rows) < 2:
+                time.sleep(2)
+                continue
+
+            rows = found_rows
+            break
+
+        except Exception as e:
+            print(f"Subscription Scraper Error (attempt {attempt+1}): {e}")
+            time.sleep(2)
+
+    if not rows:
+        print("Subscription Scraper: all retries failed, returning empty")
+        return results
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
-            return results
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        rows = soup.find_all("tr")
-
         for row in rows:
             cols = row.find_all(["td", "th"])
             if len(cols) < 12:
@@ -77,7 +103,7 @@ def fetch_subscription_data():
         return results
 
     except Exception as e:
-        print(f"Subscription Scraper Error: {e}")
+        print(f"Subscription Scraper Parse Error: {e}")
         return results
 
 

@@ -36,7 +36,11 @@ def check_linkintime(pan_number, company_id="ALL"):
                 return {"status": "ALLOTTED", "shares": f"{shares} Shares Allotted"}
             return {"status": "NON_ALLOTTEE", "shares": "0 Shares (Non-Allottee)"}
 
-        return {"status": "NOT_APPLIED", "shares": "No record found for this PAN"}
+        # NOTE: hum "ALL" generic company-id use karte hain kyunki real registrar
+        # system har IPO ke liye specific company select karwata hai (jo hume
+        # nahi pata) + CAPTCHA maangta hai — isliye "record nahi mila" ka
+        # matlab "apply nahi kiya" pakka nahi hai, sirf "verify nahi ho paya"
+        return {"status": "UNVERIFIED", "shares": "Automated check inconclusive — verify on registrar site"}
 
     except Exception as e:
         print(f"LinkIntime Check Error for {pan_number}: {e}")

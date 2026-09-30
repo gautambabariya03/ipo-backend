@@ -11,6 +11,7 @@ Est Price | Listing Price | Listing Day Close | Closing Price (LTP)
 import requests
 from bs4 import BeautifulSoup
 import re
+import time
 from datetime import datetime
 
 HEADERS = {
@@ -42,15 +43,40 @@ def fetch_listing_performance(year=None):
     year = year or datetime.now().year
     url = f"https://www.investorgain.com/report/ipo-gmp-performance-tracker/377/all/?year={year}"
     results = {}
+    rows = []
+
+    # investorgain kabhi-kabhi "Loading..." wala JS-shell bhej deta hai —
+    # isliye yahan bhi retry karte hain
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            if resp.status_code != 200:
+                time.sleep(2)
+                continue
+
+            if "Loading..." in resp.text and "<table" not in resp.text.lower():
+                time.sleep(2)
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            table = soup.find("table")
+            found_rows = table.find_all("tr") if table else soup.find_all("tr")
+            if len(found_rows) < 2:
+                time.sleep(2)
+                continue
+
+            rows = found_rows
+            break
+
+        except Exception as e:
+            print(f"Listing Price Scraper Error (attempt {attempt+1}): {e}")
+            time.sleep(2)
+
+    if not rows:
+        print("Listing Price Scraper: all retries failed, returning empty")
+        return results
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
-            return results
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        rows = soup.find_all("tr")
-
         for row in rows:
             cols = row.find_all(["td", "th"])
             if len(cols) < 11:
@@ -76,7 +102,7 @@ def fetch_listing_performance(year=None):
         return results
 
     except Exception as e:
-        print(f"Listing Price Scraper Error: {e}")
+        print(f"Listing Price Scraper Parse Error: {e}")
         return results
 
 
