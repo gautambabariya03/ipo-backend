@@ -109,18 +109,14 @@ export default function App() {
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // App-open intro animation (GB logo fade + scale in, then fades out into the IPO list)
+  // App-open intro animation (GB logo simple fade in/out, then reveals IPO list)
   const [showIntro, setShowIntro] = useState(true);
   const introOpacity = useRef(new Animated.Value(0)).current;
-  const introScale = useRef(new Animated.Value(0.8)).current;
   useEffect(() => {
     Animated.sequence([
-      Animated.parallel([
-        Animated.timing(introOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
-        Animated.timing(introScale, { toValue: 1, duration: 350, useNativeDriver: true }),
-      ]),
-      Animated.delay(500),
-      Animated.timing(introOpacity, { toValue: 0, duration: 350, useNativeDriver: true }),
+      Animated.timing(introOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.delay(400),
+      Animated.timing(introOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]).start(() => setShowIntro(false));
   }, []);
 
@@ -501,7 +497,7 @@ export default function App() {
             { opacity: introOpacity, zIndex: 999 }
           ]}
         >
-          <Animated.Text style={[styles.introLogo, { transform: [{ scale: introScale }] }]}>GB</Animated.Text>
+          <Text style={styles.introLogo}>GB</Text>
           <Text style={styles.introSub}>POWERED BY GB</Text>
         </Animated.View>
       )}
@@ -1080,10 +1076,10 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* SEARCH MODAL */}
-      <Modal visible={searchModalOpen} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg, maxHeight: '85%' }]}>
+      {/* SEARCH MODAL — top se khulta hai (search icon ke paas), bottom-sheet nahi */}
+      <Modal visible={searchModalOpen} transparent animationType="fade">
+        <View style={styles.searchModalBackdrop}>
+          <View style={[styles.searchBox, { backgroundColor: theme.cardBg }]}>
             <View style={styles.sheetTop}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Search IPOs</Text>
@@ -1523,6 +1519,14 @@ const styles = StyleSheet.create({
   bottomNavLabel: { fontSize: 10, marginTop: 2, fontWeight: '700' },
   bottomNavLabelActive: { color: '#10B981' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+  searchModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-start' },
+  searchBox: {
+    marginTop: (Platform.OS === 'android' ? StatusBar.currentHeight || 24 : 12) + 68,
+    marginHorizontal: 12,
+    borderRadius: 14,
+    padding: 16,
+    maxHeight: '70%',
+  },
   sheetBox: { borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, maxHeight: '80%' },
   sheetTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sheetTitle: { fontSize: 16, fontWeight: '900' },
