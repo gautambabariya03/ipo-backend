@@ -1,10 +1,10 @@
 /* 
  * ----------------------------------------------------
- * APEX TERMINAL PRO - UI UPDATED 
+ * APEX TERMINAL PRO - UI UPDATED (WHITE MODE)
  * POWERED BY GAUTAM BABARIYA
  * ----------------------------------------------------
  */
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -32,8 +32,6 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 
-// App band/background/killed — kisi bhi state me notification aaye toh alert
-// dikhao (mobile ke home-screen/lock-screen pe bhi, jab app open na ho)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -45,8 +43,6 @@ const BASE_URL = 'https://ipo-backend-fpjo.onrender.com';
 const API_URL = `${BASE_URL}/api/ipos/live`;
 const ALLOTMENT_API = `${BASE_URL}/api/allotment/check-batch`;
 
-// Har company naam ke liye ek consistent (deterministic) color deta hai —
-// same company hamesha same color pill/logo dikhayega
 const AVATAR_COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444', '#14B8A6', '#F97316'];
 function avatarColor(name) {
   let hash = 0;
@@ -90,29 +86,24 @@ export default function App() {
   const [fetchError, setFetchError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Theme State: Dark / Light
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  // Theme State: Default set to Light (White Mode)
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState('IPO'); // IPO, Account, Allotment
-  const [statusFilter, setStatusFilter] = useState('OPEN'); // OPEN, UPCOMING, CLOSED
-  const [categoryFilter, setCategoryFilter] = useState('ALL'); // ALL, MAINBOARD, SME
+  const [activeTab, setActiveTab] = useState('IPO');
+  const [statusFilter, setStatusFilter] = useState('OPEN');
+  const [categoryFilter, setCategoryFilter] = useState('ALL');
 
-  // Visible Blinking Dot Pulse
   const [blinkOn, setBlinkOn] = useState(true);
 
-  // Notifications (new IPO / GMP change / status change feed)
   const [notifications, setNotifications] = useState([]);
   const [notifModalOpen, setNotifModalOpen] = useState(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
-  // Search
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedIpoId, setHighlightedIpoId] = useState(null);
 
-  // App-open intro animation (GB logo simple fade in/out, then reveals IPO list)
   const [showIntro, setShowIntro] = useState(true);
   const introOpacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -123,9 +114,8 @@ export default function App() {
     ]).start(() => setShowIntro(false));
   }, []);
 
-  // Card flip (front: GMP/price info, back: live QIB/HNI/Retail subscription + registrar)
   const [flippedIds, setFlippedIds] = useState({});
-  const [detailCache, setDetailCache] = useState({}); // per-IPO registrar/lead-manager cache
+  const [detailCache, setDetailCache] = useState({}); 
   const flipAnims = useRef({}).current;
   const getFlipAnim = (id) => {
     if (!flipAnims[id]) flipAnims[id] = new Animated.Value(0);
@@ -141,8 +131,6 @@ export default function App() {
     }).start();
     setFlippedIds(prev => ({ ...prev, [id]: !isFlipped }));
 
-    // Pehli baar flip hone par registrar/lead-manager detail fetch karo (VIEW
-    // INSIGHTS button hata diya gaya hai — ab flip-back hi ye data dikhata hai)
     if (!isFlipped && !detailCache[id]) {
       fetch(`${BASE_URL}/api/ipos/detail/${id}`)
         .then(r => r.json())
@@ -163,16 +151,14 @@ export default function App() {
     }
   };
 
-  // Accounts (Vault)
   const [accounts, setAccounts] = useState([]);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPan, setNewPan] = useState('');
-  const [newAccountType, setNewAccountType] = useState('CDSL'); // CDSL, NSDL
+  const [newAccountType, setNewAccountType] = useState('CDSL');
   const [newClientId, setNewClientId] = useState('');
   const [newUpiId, setNewUpiId] = useState('');
 
-  // Live Backend Allotment Batch
   const [selectedAllotmentIpo, setSelectedAllotmentIpo] = useState(null);
   const [ipoPickerOpen, setIpoPickerOpen] = useState(false);
   const [checkingProgress, setCheckingProgress] = useState(null);
@@ -192,31 +178,23 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Android ka hardware "back" button — is app me real navigation stack nahi
-  // hai (sirf tab-switching), isliye default back button seedha app close kar
-  // deta tha. Ab: agar IPO tab pe nahi hain, toh back IPO tab pe le jaayega;
-  // IPO tab pe hi ho toh normal behavior (app minimize) hoga.
   useEffect(() => {
     const onBackPress = () => {
       if (activeTab !== 'IPO') {
         setActiveTab('IPO');
-        return true; // handled — app close nahi hogi
+        return true;
       }
-      return false; // IPO tab pe already hain, default behavior chalne do
+      return false; 
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
   }, [activeTab]);
 
-  // REAL-TIME AUTO REFRESH: backend re-scrapes investorgain every 10 min in the
-  // background, but that new data only reaches the screen if the app asks for
-  // it. This polls the API every 30s so OPEN/UPCOMING/CLOSED tabs and GMP
-  // values update on their own, without the user pulling to refresh.
   useEffect(() => {
     const pollTimer = setInterval(() => {
       fetchLiveIPOs();
       fetchNotifications();
-    }, 30000); // 30 seconds
+    }, 30000); 
 
     return () => clearInterval(pollTimer);
   }, []);
@@ -234,12 +212,9 @@ export default function App() {
     }
   };
 
-  // Mobile home-screen/lock-screen push notifications (real OS push, not just
-  // the in-app bell). NOTE: SDK 53+ Expo Go doesn't support push — a
-  // development/production build (eas build) is required to actually see this.
   const registerForPushNotifications = async () => {
     try {
-      if (!Device.isDevice) return; // simulators/emulators can't get push tokens
+      if (!Device.isDevice) return; 
 
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('default', {
@@ -262,8 +237,6 @@ export default function App() {
       const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
       const pushToken = tokenResponse.data;
 
-      // Backend ko token bhejo taaki naya IPO / GMP change / status change
-      // hone par real push bheja ja sake (server-side, Expo push service se)
       await fetch(`${BASE_URL}/api/register-push-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -372,10 +345,6 @@ export default function App() {
     }
   };
 
-  // REAL LIVE BACKEND ALLOTMENT ENGINE
-  // Har account ke liye alag request (server har PAN par registrar site pe OCR se
-  // captcha solve karke check karta hai). Isse har account ka result aate hi dikhta
-  // hai aur progress milta hai ("Checking 2 of 5"). Lambi request timeout se bhi bachta hai.
   const checkOneAccount = async (acc) => {
     try {
       const resp = await fetch(ALLOTMENT_API, {
@@ -419,16 +388,6 @@ export default function App() {
     setCheckingProgress(null);
   };
 
-  const recheckSingleAccount = async (accId) => {
-    if (!selectedAllotmentIpo) return;
-    const targetAcc = accounts.find(a => a.id === accId);
-    if (!targetAcc) return;
-    setCheckingProgress(`Checking — ${targetAcc.name}`);
-    const res = await checkOneAccount(targetAcc);
-    setAllotmentResults(prev => ({ ...prev, [accId]: res }));
-    setCheckingProgress(null);
-  };
-
   const shareStatus = async (item, res) => {
     try {
       await Share.share({
@@ -446,20 +405,14 @@ export default function App() {
       return matchStatus && matchCategory;
     })
     .sort((a, b) => {
-      // Search se select ki hui IPO hamesha sabse upar dikhegi
       if (highlightedIpoId) {
         if (a.id === highlightedIpoId) return -1;
         if (b.id === highlightedIpoId) return 1;
       }
       if (statusFilter !== 'CLOSED') return 0;
-      // Jin IPOs ka allotment declare ho chuka hai, unhe upar dikhao — taaki
-      // allotment check karne wale IPO turant mil jaayein
       return (b.allotment_declared ? 1 : 0) - (a.allotment_declared ? 1 : 0);
     });
 
-  // Allotment check sirf un IPOs ke liye valid hai jo CLOSED ho chuke hain
-  // AUR jinka allotment date already aa chuka hai — OPEN/UPCOMING IPOs ya
-  // aise CLOSED IPOs jinka allotment abhi aana baaki hai, list me nahi aayenge.
   const allotmentEligibleIpos = ipos.filter(
     item => item.status === 'CLOSED' && item.allotment_declared
   );
@@ -468,20 +421,23 @@ export default function App() {
     ? ipos.filter(item => item.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : [];
 
+  // Updated Theme with New White Mode Colors
   const theme = {
-    bg: isDarkMode ? '#0B0F19' : '#F3F4F6',
+    bg: isDarkMode ? '#0B0F19' : '#F9F9FB',
     cardBg: isDarkMode ? '#111827' : '#FFFFFF',
-    textMain: isDarkMode ? '#F8FAFC' : '#111827',
+    textMain: isDarkMode ? '#F8FAFC' : '#1A1A1A',
     textSub: isDarkMode ? '#94A3B8' : '#6B7280',
     border: isDarkMode ? '#1F2937' : '#E5E7EB',
     headerBg: isDarkMode ? '#0B0F19' : '#FFFFFF',
-    innerBox: isDarkMode ? '#1E293B' : '#F9FAFB',
+    innerBox: isDarkMode ? '#1E293B' : '#F4F5F7',
     specKey: isDarkMode ? '#94A3B8' : '#6B7280',
-    specVal: isDarkMode ? '#F8FAFC' : '#1F2937',
-    terminalBg: isDarkMode ? '#064E3B' : '#ECFDF5',
-    terminalBorder: isDarkMode ? '#059669' : '#A7F3D0',
-    terminalText: isDarkMode ? '#34D399' : '#059669'
+    specVal: isDarkMode ? '#F8FAFC' : '#1A1A1A',
+    terminalBg: isDarkMode ? '#064E3B' : '#F9FAFB',
+    terminalBorder: isDarkMode ? '#059669' : '#E5E7EB',
+    terminalText: isDarkMode ? '#34D399' : '#1A1A1A'
   };
+
+  const BRAND_COLOR = '#8B5CF6'; // New Purple brand color
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -496,7 +452,7 @@ export default function App() {
             { opacity: introOpacity, zIndex: 999 }
           ]}
         >
-          <Text style={styles.introLogo}>GB</Text>
+          <Text style={[styles.introLogo, { color: BRAND_COLOR }]}>GB</Text>
           <Text style={styles.introSub}>POWERED BY GB</Text>
         </Animated.View>
       )}
@@ -505,7 +461,7 @@ export default function App() {
       <View style={[styles.topBar, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={[styles.radarIconBox, { backgroundColor: theme.innerBox, borderColor: theme.border }]}>
-            <View style={[styles.radarDot, { opacity: blinkOn ? 1 : 0.2 }]} />
+            <View style={[styles.radarDot, { backgroundColor: BRAND_COLOR, opacity: blinkOn ? 1 : 0.2 }]} />
           </View>
           <View>
             <Text style={[styles.appName, { color: theme.textMain }]}>GB</Text>
@@ -553,7 +509,7 @@ export default function App() {
                   style={[
                     styles.pillTabBtn,
                     { backgroundColor: theme.innerBox },
-                    isActive && styles.pillTabBtnActive
+                    isActive && { backgroundColor: BRAND_COLOR }
                   ]}
                   onPress={() => setStatusFilter(tab)}
                 >
@@ -579,11 +535,11 @@ export default function App() {
                     style={[
                       styles.chip,
                       { backgroundColor: theme.innerBox },
-                      isSelected && styles.chipActive
+                      isSelected && { borderWidth: 1, borderColor: BRAND_COLOR }
                     ]}
                     onPress={() => setCategoryFilter(cat.key)}
                   >
-                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>
+                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && { color: BRAND_COLOR }]}>
                       {cat.label}
                     </Text>
                   </TouchableOpacity>
@@ -597,7 +553,7 @@ export default function App() {
 
           {loading ? (
             <View style={styles.centerBox}>
-              <ActivityIndicator size="large" color="#10B981" />
+              <ActivityIndicator size="large" color={BRAND_COLOR} />
               <Text style={{ color: theme.textSub, marginTop: 12, fontSize: 13 }}>Syncing Live Market GMP...</Text>
             </View>
           ) : fetchError && ipos.length === 0 ? (
@@ -610,7 +566,7 @@ export default function App() {
                 Free hosting server kuch der inactive rehne par so jaata hai. Pehli request ko 30-50 second lag sakte hain.
               </Text>
               <TouchableOpacity
-                style={[styles.batchTriggerBtn, { marginTop: 18, paddingHorizontal: 30 }]}
+                style={[styles.batchTriggerBtn, { marginTop: 18, paddingHorizontal: 30, backgroundColor: BRAND_COLOR }]}
                 onPress={() => { setLoading(true); fetchLiveIPOs(); }}
               >
                 <Text style={styles.primaryBtnText}>RETRY</Text>
@@ -621,7 +577,7 @@ export default function App() {
               data={displayList}
               keyExtractor={item => item.id}
               contentContainerStyle={{ padding: 12, paddingBottom: 25 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchLiveIPOs(); }} tintColor="#10B981" />}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchLiveIPOs(); }} tintColor={BRAND_COLOR} />}
               ListEmptyComponent={
                 <View style={[styles.centerBox, { marginTop: 60 }]}>
                   <Ionicons name="file-tray-outline" size={40} color={theme.textSub} />
@@ -671,7 +627,6 @@ export default function App() {
                         {['qib', 'hni', 'retail', 'emp', 'sh', 'total'].map(key => {
                           const val = item.subscription?.[key] || 'N/A';
                           
-                          // Hide EMP or SH if they are N/A
                           if ((key === 'emp' || key === 'sh') && (val === 'N/A' || val === '--')) {
                             return null;
                           }
@@ -683,7 +638,7 @@ export default function App() {
                           return (
                             <View key={key} style={[styles.darkTableRow, { borderColor: theme.border }]}>
                               <Text style={[styles.tableTxt, { color: theme.textSub }]}>{SUB_LABELS[key]}</Text>
-                              <Text style={[styles.tableTxtBold, { color: key === 'total' ? '#10B981' : theme.textMain }]}>
+                              <Text style={[styles.tableTxtBold, { color: key === 'total' ? BRAND_COLOR : theme.textMain }]}>
                                 {val}
                               </Text>
                             </View>
@@ -710,12 +665,12 @@ export default function App() {
                           <View
                             style={[
                               styles.liveBlinkCircle,
-                              { backgroundColor: blinkOn ? '#10B981' : '#064E3B' }
+                              { backgroundColor: blinkOn ? '#10B981' : theme.border }
                             ]}
                           />
-                          <Text style={styles.gmpTerminalLabel}>LIVE GMP TICKER</Text>
+                          <Text style={[styles.gmpTerminalLabel, { color: BRAND_COLOR }]}>LIVE GMP TICKER</Text>
                         </View>
-                        <Text style={[styles.lastHeardText, { color: isDarkMode ? '#A7F3D0' : '#065F46' }]}>Updated: {item.last_heard}</Text>
+                        <Text style={[styles.lastHeardText, { color: theme.textSub }]}>Updated: {item.last_heard}</Text>
                       </View>
 
                       <View style={{ alignItems: 'flex-end' }}>
@@ -747,24 +702,24 @@ export default function App() {
                       <View style={[styles.closedPerformanceBox, { backgroundColor: theme.innerBox }]}>
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.specKey, { color: theme.specKey }]}>LISTING PRICE</Text>
-                          <Text style={styles.greenHighlight}>{item.listing_price}</Text>
+                          <Text style={[styles.brandHighlight, { color: BRAND_COLOR }]}>{item.listing_price}</Text>
                         </View>
                         <View style={{ flex: 1, alignItems: 'flex-end' }}>
                           <Text style={[styles.specKey, { color: theme.specKey }]}>CURRENT CMP (BSE)</Text>
-                          <Text style={styles.greenHighlight}>{item.current_price}</Text>
+                          <Text style={[styles.brandHighlight, { color: BRAND_COLOR }]}>{item.current_price}</Text>
                         </View>
                       </View>
                     ) : (
                       <View style={[styles.profitBanner, { backgroundColor: theme.innerBox }]}>
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.specKey, { color: theme.specKey }]}>EST. RETAIL PROFIT</Text>
-                          <Text style={styles.profitAmount}>
+                          <Text style={[styles.profitAmount, { color: BRAND_COLOR }]}>
                             {hasGmp ? `₹${item.retail_profit.toLocaleString('en-IN')}` : '--'}
                           </Text>
                         </View>
                         <View style={{ flex: 1, alignItems: 'flex-end' }}>
                           <Text style={[styles.specKey, { color: theme.specKey }]}>EST. HNI PROFIT</Text>
-                          <Text style={styles.profitAmount}>
+                          <Text style={[styles.profitAmount, { color: BRAND_COLOR }]}>
                             {hasGmp ? `₹${item.hni_profit.toLocaleString('en-IN')}` : '--'}
                           </Text>
                         </View>
@@ -779,7 +734,7 @@ export default function App() {
                     <View style={styles.actionRow}>
                       {isClosed ? (
                         <TouchableOpacity
-                          style={[styles.primaryActionBtn, { backgroundColor: '#10B981', flex: 1 }]}
+                          style={[styles.primaryActionBtn, { backgroundColor: BRAND_COLOR, flex: 1 }]}
                           onPress={() => {
                             const registrarName = item.registrar ? item.registrar.toLowerCase() : '';
                             if (item.registrar_url) {
@@ -815,9 +770,9 @@ export default function App() {
               <Text style={[styles.accountTitle, { color: theme.textMain }]}>Family Vault ({accounts.length})</Text>
               <Text style={[styles.accountSub, { color: theme.textSub }]}>Manage Demat & PANs for Instant Allotments</Text>
             </View>
-            <TouchableOpacity style={styles.addPanBtn} onPress={() => setAccountModalOpen(true)}>
-              <Ionicons name="add" size={18} color="#0B0F19" />
-              <Text style={styles.addPanText}>Add PAN</Text>
+            <TouchableOpacity style={[styles.addPanBtn, { backgroundColor: BRAND_COLOR }]} onPress={() => setAccountModalOpen(true)}>
+              <Ionicons name="add" size={18} color="#FFF" />
+              <Text style={[styles.addPanText, { color: '#FFF' }]}>Add PAN</Text>
             </TouchableOpacity>
           </View>
 
@@ -866,7 +821,7 @@ export default function App() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.batchTriggerBtn}
+            style={[styles.batchTriggerBtn, { backgroundColor: BRAND_COLOR }]}
             onPress={startBatchCheck}
             disabled={checkingProgress !== null}
           >
@@ -902,9 +857,6 @@ export default function App() {
             keyExtractor={item => item.id}
             renderItem={({ item }) => {
               const res = allotmentResults[item.id];
-              // User ke exact spec ke hisaab se: ALLOTTED = green box, NOT
-              // ALLOTTED = red box, baaki sab (not applied / check failed /
-              // scan nahi hua) = neutral grey box
               let pillBg = styles.statusNotApplied;
               let pillTextColor = theme.textSub;
               let label = 'CHECK ABOVE ⬆';
@@ -918,11 +870,8 @@ export default function App() {
                   pillTextColor = '#EF4444';
                   label = 'NOT ALLOTTED';
                 } else if (res.status === 'NOT_APPLIED') {
-                  // Registrar ne khud bataya ki is PAN ka koi application record nahi hai
                   label = 'NOT APPLIED';
                 } else {
-                  // UNVERIFIED — auto-check pakka result nahi la paaya (kabhi galat
-                  // result nahi dikhate), isliye registrar link se manually check karo
                   pillBg = { backgroundColor: 'rgba(245,158,11,0.12)' };
                   pillTextColor = '#F59E0B';
                   label = 'COULD NOT VERIFY';
@@ -974,9 +923,9 @@ export default function App() {
               <Ionicons
                 name={nav.icon}
                 size={20}
-                color={isActive ? '#10B981' : theme.textSub}
+                color={isActive ? BRAND_COLOR : theme.textSub}
               />
-              <Text style={[styles.bottomNavLabel, { color: theme.textSub }, isActive && styles.bottomNavLabelActive]}>
+              <Text style={[styles.bottomNavLabel, { color: theme.textSub }, isActive && { color: BRAND_COLOR }]}>
                 {nav.label}
               </Text>
             </TouchableOpacity>
@@ -1003,12 +952,12 @@ export default function App() {
             <TouchableOpacity
               style={[
                 styles.themeOptionRow,
-                { backgroundColor: theme.innerBox, borderColor: isDarkMode ? '#10B981' : theme.border }
+                { backgroundColor: theme.innerBox, borderColor: isDarkMode ? BRAND_COLOR : theme.border }
               ]}
               onPress={() => setThemeMode('dark')}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="moon" size={20} color="#10B981" style={{ marginRight: 12 }} />
+                <Ionicons name="moon" size={20} color={BRAND_COLOR} style={{ marginRight: 12 }} />
                 <View>
                   <Text style={[styles.themeOptionTitle, { color: theme.textMain }]}>Dark Mode (Terminal Pro)</Text>
                   <Text style={[styles.specKey, { color: theme.specKey }]}>Obsidian slate theme for low light</Text>
@@ -1017,14 +966,14 @@ export default function App() {
               <Ionicons
                 name={isDarkMode ? "radio-button-on" : "radio-button-off"}
                 size={20}
-                color={isDarkMode ? "#10B981" : theme.textSub}
+                color={isDarkMode ? BRAND_COLOR : theme.textSub}
               />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[
                 styles.themeOptionRow,
-                { backgroundColor: theme.innerBox, borderColor: !isDarkMode ? '#10B981' : theme.border, marginTop: 10 }
+                { backgroundColor: theme.innerBox, borderColor: !isDarkMode ? BRAND_COLOR : theme.border, marginTop: 10 }
               ]}
               onPress={() => setThemeMode('light')}
             >
@@ -1038,12 +987,12 @@ export default function App() {
               <Ionicons
                 name={!isDarkMode ? "radio-button-on" : "radio-button-off"}
                 size={20}
-                color={!isDarkMode ? "#10B981" : theme.textSub}
+                color={!isDarkMode ? BRAND_COLOR : theme.textSub}
               />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.modalCloseBtn, { marginTop: 20 }]}
+              style={[styles.modalCloseBtn, { marginTop: 20, backgroundColor: BRAND_COLOR }]}
               onPress={() => setSettingsModalOpen(false)}
             >
               <Text style={styles.primaryBtnText}>DONE</Text>
@@ -1088,7 +1037,7 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* SEARCH MODAL â€” top se khulta hai (search icon ke paas), bottom-sheet nahi */}
+      {/* SEARCH MODAL */}
       <Modal visible={searchModalOpen} transparent animationType="fade">
         <View style={styles.searchModalBackdrop}>
           <View style={[styles.searchBox, { backgroundColor: theme.cardBg }]}>
@@ -1133,7 +1082,7 @@ export default function App() {
                   }}
                 >
                   <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.name}</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status} â€¢ {item.category}</Text>
+                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status} • {item.category}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -1171,10 +1120,14 @@ export default function App() {
                 return (
                   <TouchableOpacity
                     key={type}
-                    style={[styles.chip, { backgroundColor: theme.innerBox, marginRight: 8 }, isSelected && styles.chipActive]}
+                    style={[
+                      styles.chip, 
+                      { backgroundColor: theme.innerBox, marginRight: 8 }, 
+                      isSelected && { borderWidth: 1, borderColor: BRAND_COLOR }
+                    ]}
                     onPress={() => setNewAccountType(type)}
                   >
-                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && styles.chipTextActive]}>{type}</Text>
+                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && { color: BRAND_COLOR }]}>{type}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -1204,7 +1157,7 @@ export default function App() {
                 <Text style={{ color: theme.textSub, fontWeight: 'bold' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalActionBtn, { backgroundColor: '#10B981' }]}
+                style={[styles.modalActionBtn, { backgroundColor: BRAND_COLOR }]}
                 onPress={saveAccount}
               >
                 <Text style={styles.primaryBtnText}>Save Account</Text>
@@ -1256,7 +1209,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  introLogo: { fontSize: 64, fontWeight: '900', color: '#10B981', letterSpacing: 2 },
+  introLogo: { fontSize: 64, fontWeight: '900', letterSpacing: 2 },
   introSub: { fontSize: 12, fontWeight: '700', color: '#6B7280', letterSpacing: 3, marginTop: 8 },
   topBar: {
     flexDirection: 'row',
@@ -1276,9 +1229,8 @@ const styles = StyleSheet.create({
     marginRight: 10,
     borderWidth: 1
   },
-  radarDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981' },
+  radarDot: { width: 10, height: 10, borderRadius: 5 },
   appName: { fontSize: 14, fontWeight: '900', letterSpacing: 1.5 },
-  appSub: { fontSize: 9, fontWeight: '800', color: '#10B981', letterSpacing: 1 },
   topRightActions: { flexDirection: 'row', alignItems: 'center' },
   iconBtn: {
     width: 32,
@@ -1312,9 +1264,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginHorizontal: 3
   },
-  pillTabBtnActive: { backgroundColor: '#10B981' },
   pillTabText: { fontSize: 11, fontWeight: '800' },
-  pillTabTextActive: { color: '#0B0F19' },
+  pillTabTextActive: { color: '#FFF' },
   filterChipRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1329,9 +1280,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginRight: 8
   },
-  chipActive: { borderWidth: 1, borderColor: '#10B981' },
   chipText: { fontSize: 11, fontWeight: '700' },
-  chipTextActive: { color: '#10B981' },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   cardContainer: {
     borderRadius: 16,
@@ -1340,9 +1289,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.1,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 2,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -1387,7 +1336,7 @@ const styles = StyleSheet.create({
     marginBottom: 10
   },
   liveBlinkCircle: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  gmpTerminalLabel: { fontSize: 10, fontWeight: '900', color: '#10B981', letterSpacing: 1 },
+  gmpTerminalLabel: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
   lastHeardText: { fontSize: 10, marginTop: 2 },
   gmpMainValue: { fontSize: 20, fontWeight: '900' },
   gmpPctBadge: { fontSize: 10, fontWeight: '800' },
@@ -1407,14 +1356,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8
   },
-  profitAmount: { fontSize: 14, fontWeight: '900', color: '#10B981', marginTop: 2 },
+  profitAmount: { fontSize: 14, fontWeight: '900', marginTop: 2 },
   closedPerformanceBox: {
     flexDirection: 'row',
     padding: 10,
     borderRadius: 8,
     marginBottom: 8
   },
-  greenHighlight: { fontSize: 12, fontWeight: '900', color: '#10B981', marginTop: 2 },
+  brandHighlight: { fontSize: 12, fontWeight: '900', marginTop: 2 },
   timelineRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1422,32 +1371,11 @@ const styles = StyleSheet.create({
   },
   timelineText: { fontSize: 10 },
   actionRow: { flexDirection: 'row', alignItems: 'center' },
-  detailsBtn: {
-    borderWidth: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8
-  },
-  detailsBtnText: { fontSize: 10, fontWeight: '800' },
-  shareIconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#0369A1',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: 8
-  },
   primaryActionBtn: {
     flex: 1,
-    backgroundColor: '#2563EB',
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
-    shadowColor: '#2563EB',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
     elevation: 2,
   },
   primaryBtnText: { fontSize: 12, fontWeight: '900', color: '#FFF', letterSpacing: 0.6 },
@@ -1462,12 +1390,11 @@ const styles = StyleSheet.create({
   addPanBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#10B981',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8
   },
-  addPanText: { fontSize: 11, fontWeight: 'bold', color: '#0B0F19', marginLeft: 4 },
+  addPanText: { fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
   accountCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1491,15 +1418,10 @@ const styles = StyleSheet.create({
   },
   selectedIpoName: { fontSize: 14, fontWeight: '800', marginTop: 2 },
   batchTriggerBtn: {
-    backgroundColor: '#10B981',
     paddingVertical: 13,
     borderRadius: 10,
     alignItems: 'center',
     marginBottom: 12,
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
     elevation: 2,
   },
   registrarLinkBtn: {
@@ -1520,7 +1442,6 @@ const styles = StyleSheet.create({
     borderWidth: 1
   },
   statusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  statusAllotted: { backgroundColor: '#064E3B' },
   statusNotApplied: { backgroundColor: '#1E293B' },
   statusPillText: { fontSize: 11, fontWeight: '800' },
   bottomNavbar: {
@@ -1530,7 +1451,6 @@ const styles = StyleSheet.create({
   },
   bottomNavBtn: { flex: 1, alignItems: 'center' },
   bottomNavLabel: { fontSize: 10, marginTop: 2, fontWeight: '700' },
-  bottomNavLabelActive: { color: '#10B981' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   searchModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-start' },
   searchBox: {
@@ -1553,16 +1473,10 @@ const styles = StyleSheet.create({
     borderWidth: 1.5
   },
   themeOptionTitle: { fontSize: 13, fontWeight: '800' },
-  darkTable: { borderWidth: 1, borderRadius: 8, overflow: 'hidden', marginBottom: 12 },
-  darkTableRowHead: { flexDirection: 'row', justifyContent: 'space-between', padding: 8 },
-  tableHeadTxt: { fontSize: 11, fontWeight: 'bold' },
   darkTableRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 8, borderTopWidth: 1 },
   tableTxt: { fontSize: 12 },
   tableTxtBold: { fontSize: 12, fontWeight: 'bold' },
-  legalInfoBox: { padding: 10, borderRadius: 8, marginBottom: 14 },
-  specRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 3 },
-  legalVal: { fontSize: 11, fontWeight: '700' },
-  modalCloseBtn: { backgroundColor: '#10B981', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 8 },
+  modalCloseBtn: { paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 8 },
   addAccountModalCard: { borderRadius: 14, padding: 18, marginHorizontal: 20, marginBottom: 100 },
   darkInput: { borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 13 },
   modalActionBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },

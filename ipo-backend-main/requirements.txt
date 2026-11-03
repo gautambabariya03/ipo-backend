@@ -1,7 +1,7 @@
 fastapi
 uvicorn
-requests
 beautifulsoup4
 playwright
-pytesseract
-Pillow
+requests
+pandas
+pydantic
