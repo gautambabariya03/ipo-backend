@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone, timedelta, time as dtime
 from scrapers.listing_price_scraper import fetch_listing_performance, normalize_name
 from scrapers.subscription_scraper import fetch_subscription_data
+from scrapers.registrars import identify_registrar
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -35,14 +36,15 @@ REGISTRAR_DOMAINS = {
 }
 
 def derive_registrar(url):
+    """Investorgain ke link se asli registrar + official allotment URL.
+    BSE/NSE ki generic pages ko registrar nahi maante (None, None)."""
     if not url:
         return None, None
-    for domain, name in REGISTRAR_DOMAINS.items():
-        if domain in url:
-            return name, url
-    # Anjaan registrar ho toh bhi link toh de do, naam generic rakho
-    m = re.search(r"https?://(?:www\.)?([^/]+)", url)
-    return (m.group(1) if m else "Registrar"), url
+    name, official = identify_registrar(url)
+    if name:
+        # Investorgain ne jo exact link diya wahi use karo (deep-link ho sakta hai)
+        return name, url
+    return None, None
 
 def parse_num(val_str):
     nums = re.findall(r'[-+]?\d+(?:\.\d+)?', val_str.replace(',', '').replace('₹', ''))
@@ -134,12 +136,16 @@ def fetch_live_gmp():
             # link bhi deta hai jo seedha us IPO ke asli registrar se juda hota hai
             all_links = cols[0].find_all("a")
             registrar_url = None
+            allotment_link_seen = False
             for link in all_links:
                 href = link.get("href", "")
                 title = (link.get("title") or "").upper()
-                if "kfintech" in href or "mpms.mufg" in href or "linkintime" in href or \
-                   "maashitla" in href or "bigshareonline" in href or "CHECK ALLOTMENT" in title:
-                    registrar_url = href
+                is_allot_link = "CHECK ALLOTMENT" in title or identify_registrar(href)[0] is not None
+                if not is_allot_link:
+                    continue
+                allotment_link_seen = True   # allotment ka signal (BSE link ho tab bhi)
+                if identify_registrar(href)[0] is not None:
+                    registrar_url = href      # sirf asli registrar ka link
                     break
             registrar_name, registrar_url = derive_registrar(registrar_url)
 
@@ -265,7 +271,7 @@ def fetch_live_gmp():
                 "last_heard": now_str,
                 "allotment_date": final_allot_str,
                 "allotment_declared": allotment_declared,
-                "allotment_live": bool(registrar_url) and allotment_declared,
+                "allotment_live": allotment_link_seen and allotment_declared,
                 "listing_date": list_str if "LISTING" not in list_str.upper() else "--",
                 "retail_profit": ret_prof,
                 "hni_profit": hni_prof,

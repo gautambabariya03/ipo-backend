@@ -26,6 +26,7 @@ def _to_app_result(r):
         "status": "UNVERIFIED",
         "shares": r.get("message") or "Auto-check nahi ho paya — registrar site se check karo",
         "debug_step": r.get("debug_step"),
+        "retryable": bool(r.get("retryable")),
     }
 
 

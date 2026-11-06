@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from scrapers.gmp_scraper import fetch_live_gmp
 from scrapers.ipo_detail_scraper import fetch_ipo_detail
+from scrapers.registrars import identify_registrar
 try:
     from scrapers.allotment_checker import verify_family_allotments_async
 except ImportError:
@@ -62,7 +63,11 @@ DETAIL_CACHE_TTL_SEC = 300
 # disk pe bhi save karte hain. NOTE: Render free tier ka filesystem naya deploy
 # hone par reset ho jaata hai — ye sirf simple restarts/sleep-wake ke beech bachata
 # hai, ek naye deploy ke against guarantee nahi hai (uske liye real DB chahiye hoga).
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ipos_persistent.json")
+# Docker/Oracle par DATA_DIR=/data (volume) set karo taaki redeploy ke baad bhi push tokens aur
+# notifications na khoye. Render par default: server folder.
+DATA_DIR = os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+os.makedirs(DATA_DIR, exist_ok=True)
+DATA_FILE = os.path.join(DATA_DIR, "ipos_persistent.json")
 
 def load_from_disk():
     global CACHED_IPOS
@@ -85,7 +90,7 @@ def save_to_disk():
 # events yahan store hote hain (backend khud generate karta hai — koi external
 # scraping dependency nahi, isliye reliable hai). Latest 100 rakhte hain.
 NOTIFICATIONS = []
-NOTIF_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notifications_persistent.json")
+NOTIF_FILE = os.path.join(DATA_DIR, "notifications_persistent.json")
 MAX_NOTIFICATIONS = 100
 
 def load_notifications_from_disk():
@@ -123,7 +128,7 @@ def add_notification(ntype, message, ipo_id=None, ipo_name=None):
 # in sab tokens ko ek real push bheja jaata hai — mobile home/lock-screen
 # pe dikhega, app band ho ya khula.
 PUSH_TOKENS = []
-PUSH_TOKENS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "push_tokens.json")
+PUSH_TOKENS_FILE = os.path.join(DATA_DIR, "push_tokens.json")
 
 def load_push_tokens_from_disk():
     global PUSH_TOKENS
@@ -142,18 +147,43 @@ def save_push_tokens_to_disk():
         print(f"Push tokens disk save error: {e}")
 
 def send_push_to_all(title, body):
+    """Sab registered phones ko Expo push service se notification bhejta hai.
+    Returns ek chhota summary text (debugging ke liye: kitne ok, kya error).
+    DeviceNotRegistered wale (app uninstall) tokens apne aap hata deta hai."""
+    global PUSH_TOKENS
     if not PUSH_TOKENS:
-        return
+        return "koi device registered nahi"
     try:
-        messages = [{"to": t, "sound": "default", "title": title, "body": body} for t in PUSH_TOKENS]
-        requests.post(
+        tokens = list(PUSH_TOKENS)
+        messages = [{
+            "to": t, "sound": "default", "title": title, "body": body,
+            "channelId": "default", "priority": "high",
+        } for t in tokens]
+        resp = requests.post(
             "https://exp.host/--/api/v2/push/send",
             json=messages,
             headers={"Content-Type": "application/json", "Accept": "application/json"},
-            timeout=10,
+            timeout=15,
         )
+        tickets = (resp.json() or {}).get("data", [])
+        ok, errors, dead = 0, [], []
+        for tok, t in zip(tokens, tickets):
+            if t.get("status") == "ok":
+                ok += 1
+            else:
+                err = (t.get("details") or {}).get("error") or t.get("message") or "unknown"
+                errors.append(str(err)[:120])
+                if err == "DeviceNotRegistered":
+                    dead.append(tok)
+        if dead:
+            PUSH_TOKENS = [t for t in PUSH_TOKENS if t not in dead]
+            save_push_tokens_to_disk()
+        summary = f"{ok} ok" + (f", {len(errors)} error: {'; '.join(sorted(set(errors)))}" if errors else "")
+        print(f"Push result: {summary}")
+        return summary
     except Exception as e:
         print(f"Push Send Error: {e}")
+        return f"send error: {e}"
 
 def _allotment_is_live(it):
     if "allotment_live" in it:
@@ -205,6 +235,61 @@ def detect_changes_and_notify(old_ipos, new_ipos):
                 item["id"], item["name"]
             )
 
+# ----------------- Registrar auto-resolve -----------------
+# Investorgain kai IPOs ke liye registrar link nahi deta (ya sirf BSE ka generic link deta
+# hai). Aise IPOs ka registrar choiceindia se nikaal ke yaad rakhte hain, taaki
+# "CHECK ALLOTMENT" hamesha asli registrar ki official site khole (BSE nahi).
+REGISTRAR_CACHE = {}          # ipo_id -> {"name", "url", "time"}
+REGISTRAR_OK_TTL = 24 * 3600  # mil gaya toh 24 ghante
+REGISTRAR_FAIL_TTL = 3 * 3600 # nahi mila toh 3 ghante baad dobara try
+_RESOLVING = False
+
+def _apply_registrar_cache(items):
+    for it in items:
+        if it.get("registrar_url"):
+            continue
+        c = REGISTRAR_CACHE.get(it["id"])
+        if c and c["url"]:
+            it["registrar"] = c["name"]
+            it["registrar_url"] = c["url"]
+
+def _resolve_missing_registrars(items, limit=6):
+    now = datetime.now()
+    done = 0
+    for it in items:
+        if done >= limit:
+            break
+        if it.get("registrar_url") or it.get("status") not in ("CLOSED", "OPEN"):
+            continue
+        c = REGISTRAR_CACHE.get(it["id"])
+        if c:
+            ttl = REGISTRAR_OK_TTL if c["url"] else REGISTRAR_FAIL_TTL
+            if (now - c["time"]).total_seconds() < ttl:
+                continue
+        try:
+            det = fetch_ipo_detail(it["name"])
+            name = (det.get("registrar") or {}).get("name")
+            url = det.get("registrar_url")
+        except Exception as e:
+            print(f"Registrar resolve error for {it['name']}: {e}")
+            name = url = None
+        REGISTRAR_CACHE[it["id"]] = {"name": name, "url": url, "time": now}
+        done += 1
+
+async def _resolve_registrars_bg():
+    global _RESOLVING
+    if _RESOLVING:
+        return
+    _RESOLVING = True
+    try:
+        await asyncio.to_thread(_resolve_missing_registrars, list(CACHED_IPOS))
+        _apply_registrar_cache(CACHED_IPOS)
+        save_to_disk()
+    except Exception as e:
+        print(f"Registrar background resolve error: {e}")
+    finally:
+        _RESOLVING = False
+
 async def sync_data_safe():
     """Network fetch ko non-blocking thread me chalata hai aur naye IPOs auto-load karta hai.
     Purane (closed/listed) IPOs jo investorgain ki live page se hat jaate hain, unhe cache se
@@ -219,6 +304,8 @@ async def sync_data_safe():
             for item in data:
                 existing_by_id[item["id"]] = item  # naya data purane ko overwrite karta hai (same id)
             CACHED_IPOS = list(existing_by_id.values())
+            _apply_registrar_cache(CACHED_IPOS)
+            asyncio.create_task(_resolve_registrars_bg())  # sync ko block kiye bina
             if previous_snapshot:  # pehli hi sync par notifications spam na ho
                 detect_changes_and_notify(previous_snapshot, data)
             LAST_SYNC_TIME = datetime.now()
@@ -257,6 +344,7 @@ def root():
         "total_ipos": len(CACHED_IPOS),
         "last_sync_time": LAST_SYNC_TIME.strftime("%d %b, %I:%M:%S %p") if LAST_SYNC_TIME else None,
         "last_sync_error": LAST_SYNC_ERROR,
+        "push_devices": len(PUSH_TOKENS),
     }
 
 @app.get("/api/ipos/live")
@@ -297,6 +385,15 @@ def register_push_token(payload: PushTokenRequest):
         save_push_tokens_to_disk()
     return {"success": True, "total_devices": len(PUSH_TOKENS)}
 
+@app.get("/api/test-push")
+def test_push():
+    """Settings ke 'Send test push' button se: sab registered phones ko ek test notification."""
+    summary = send_push_to_all(
+        "IPO - test notification",
+        "Agar ye phone ke notification-shade me dikha, toh push notifications sahi chal rahe hain ✅",
+    )
+    return {"devices": len(PUSH_TOKENS), "summary": summary}
+
 @app.get("/api/ipos/detail/{ipo_id}")
 async def get_ipo_detail(ipo_id: str):
     """Subscription breakdown, lead managers, registrar/contact info for one IPO.
@@ -310,5 +407,21 @@ async def get_ipo_detail(ipo_id: str):
         return {"found": False, "error": "IPO not found in current list"}
 
     detail = await asyncio.to_thread(fetch_ipo_detail, ipo["name"])
+    detail = dict(detail)
+    own_url = ipo.get("registrar_url")
+    if own_url:
+        # Investorgain ka diya asli registrar link sabse bharosemand hai
+        detail["registrar_url"] = own_url
+        reg = dict(detail.get("registrar") or {})
+        reg["name"] = ipo.get("registrar") or reg.get("name")
+        detail["registrar"] = reg
+    elif detail.get("registrar_url"):
+        # choiceindia se mila — yaad rakho taaki card ka button bhi seedha wahi khole
+        REGISTRAR_CACHE[ipo_id] = {
+            "name": (detail.get("registrar") or {}).get("name"),
+            "url": detail["registrar_url"],
+            "time": datetime.now(),
+        }
+        _apply_registrar_cache([ipo])
     DETAIL_CACHE[ipo_id] = {"data": detail, "time": datetime.now()}
     return detail

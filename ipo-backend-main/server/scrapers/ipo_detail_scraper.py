@@ -9,6 +9,7 @@ Ye data GMP list se alag hai, isliye alag se sirf tab fetch hota hai jab user
 import requests
 from bs4 import BeautifulSoup
 import re
+from scrapers.registrars import identify_registrar, find_registrar_in_text
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -27,6 +28,24 @@ def name_to_slug(ipo_name: str) -> str:
     n = re.sub(r"\s+", "-", n)
     n = re.sub(r"-+", "-", n).strip("-")
     return f"{n}-ipo"
+
+
+def slug_candidates(ipo_name: str):
+    """choiceindia ka slug hamesha company ke poore naam jaisa nahi hota —
+    kuch variants try karte hain (poora naam, 'india' ke bina, pehle 2 shabd)."""
+    base = name_to_slug(ipo_name)[:-4]          # '-ipo' hata do
+    words = [w for w in base.split("-") if w]
+    cands = [base]
+    no_india = [w for w in words if w != "india"]
+    if no_india and no_india != words:
+        cands.append("-".join(no_india))
+    if len(words) > 2:
+        cands.append("-".join(words[:2]))
+    seen, out = set(), []
+    for c in cands:
+        if c and c not in seen:
+            seen.add(c); out.append(f"{c}-ipo")
+    return out
 
 
 def _table_after_heading(soup, heading_keywords):
@@ -70,14 +89,29 @@ def fetch_ipo_detail(ipo_name: str):
         "lead_managers": [],
         "registrar": {"name": None, "phone": None, "email": None, "website": None},
         "company_contact": {"address": None, "phone": None, "email": None, "website": None},
+        "registrar_url": None,
         "found": False,
         "error": None,
     }
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=12)
-        if resp.status_code != 200:
-            result["error"] = f"Page returned status {resp.status_code}"
+        resp = None
+        first_word = (re.sub(r"[^a-z0-9 ]", " ", ipo_name.lower()).split() or [""])[0]
+        last_status = None
+        for cand in slug_candidates(ipo_name):
+            cand_url = f"https://choiceindia.com/ipo/{cand}"
+            r = requests.get(cand_url, headers=HEADERS, timeout=12)
+            last_status = r.status_code
+            if r.status_code != 200:
+                continue
+            # galat company ka page na uthaye — page me IPO ka pehla shabd hona chahiye
+            if first_word and first_word not in r.text[:6000].lower():
+                continue
+            resp, url = r, cand_url
+            result["url"] = cand_url
+            break
+        if resp is None:
+            result["error"] = f"Page not found (last status {last_status})"
             return result
 
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -122,6 +156,16 @@ def fetch_ipo_detail(ipo_name: str):
                     result["registrar"]["website"] = url_m.group(0).strip()
                 break
 
+        # ---- Registrar fallback: page text me 'registrar' ke aas-paas dhundo ----
+        if not result["registrar"]["name"]:
+            fb_name, _ = find_registrar_in_text(soup.get_text("\n"))
+            if fb_name:
+                result["registrar"]["name"] = fb_name
+        canon_name, official_url = identify_registrar(result["registrar"]["name"])
+        if canon_name:
+            result["registrar"]["name"] = canon_name
+        result["registrar_url"] = official_url
+
         # ---- Company Contact Details ----
         for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
             if "contact details" in tag.get_text(strip=True).lower() or "contact & registrar" in tag.get_text(strip=True).lower():
@@ -133,7 +177,7 @@ def fetch_ipo_detail(ipo_name: str):
                 result["company_contact"]["email"] = email_m.group(0).strip() if email_m else None
                 break
 
-        result["found"] = bool(result["subscription"] or result["lead_managers"])
+        result["found"] = bool(result["subscription"] or result["lead_managers"] or result["registrar"]["name"])
         if not result["found"]:
             result["error"] = "Detail page structure not recognized (page may not exist yet for this IPO, or layout changed)"
 

@@ -210,7 +210,7 @@ def _short(err):
 
 
 def _check_one_pan(browser, pan, ipo_name, url):
-    out = {"status": "AUTO_FAILED", "message": "", "debug_step": "start"}
+    out = {"status": "AUTO_FAILED", "message": "", "debug_step": "start", "retryable": False}
     words = _ipo_keywords(ipo_name)
     last_reason = "no_attempt"
 
@@ -300,6 +300,7 @@ def _check_one_pan(browser, pan, ipo_name, url):
                 pass
 
     out["message"] = f"{MAX_ATTEMPTS} koshish ke baad bhi verify nahi hua ({last_reason})"
+    out["retryable"] = True  # captcha/result atka — app dobara try kar sakta hai
     return out
 
 

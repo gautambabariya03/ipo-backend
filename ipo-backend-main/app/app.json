@@ -1,17 +1,19 @@
 {
   "expo": {
-    "name": "GB",
+    "name": "IPO",
     "slug": "ipo-gmp-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
-    "backgroundColor": "#0B0F14",
-    "plugins": ["expo-notifications"],
+    "backgroundColor": "#130B23",
+    "plugins": [
+      "expo-notifications"
+    ],
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "cover",
-      "backgroundColor": "#0B0F14"
+      "backgroundColor": "#130B23"
     },
     "ios": {
       "supportsTablet": true
@@ -21,7 +23,7 @@
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0B0F14"
+        "backgroundColor": "#1B0E3D"
       }
     },
     "extra": {

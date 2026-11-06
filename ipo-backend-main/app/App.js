@@ -1,9 +1,3 @@
-/* 
- * ----------------------------------------------------
- * APEX TERMINAL PRO - UI UPDATED (WHITE MODE)
- * POWERED BY GAUTAM BABARIYA
- * ----------------------------------------------------
- */
 import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
@@ -32,24 +26,40 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 
+// App band / background / killed — kisi bhi state me notification aaye toh phone ke
+// notification-shade / lock-screen pe dikhe (WhatsApp jaisa)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
-    shouldPlaySound: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
     shouldSetBadge: true,
   }),
 });
+
 const BASE_URL = 'https://ipo-backend-fpjo.onrender.com';
 const API_URL = `${BASE_URL}/api/ipos/live`;
 const ALLOTMENT_API = `${BASE_URL}/api/allotment/check-batch`;
+const MAX_SCAN_ROUNDS = 3; // captcha/OCR atke toh ek account ko itni baar dobara try karo
 
-const AVATAR_COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444', '#14B8A6', '#F97316'];
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const AVATAR_COLORS = ['#7C3AED', '#2563EB', '#D97706', '#DB2777', '#059669', '#DC2626', '#0891B2', '#EA580C'];
 function avatarColor(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
+function initials(name) {
+  const parts = (name || '?').replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/);
+  return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[1][0] : '')).toUpperCase();
+}
+
+// Company logo: naam se domain guess karke favicon try karta hai; load fail ho toh
+// initials-avatar. NOTE: best-effort — guess hamesha sahi nahi hoga.
 function guessDomain(name) {
   let n = name.replace(/\(.*?\)/g, '');
   n = n.replace(/\b(Ltd\.?|Limited|IPO|SME|BSE|NSE|India)\b/gi, '');
@@ -58,21 +68,22 @@ function guessDomain(name) {
   return first && first.length > 2 ? `${first}.com` : null;
 }
 
-function CompanyLogo({ name, bgColor }) {
+function CompanyLogo({ name, size = 52 }) {
   const [failed, setFailed] = useState(false);
   const domain = guessDomain(name);
+  const radius = size / 2;
   if (failed || !domain) {
     return (
-      <View style={[styles.logoAvatar, { backgroundColor: bgColor }]}>
-        <Text style={styles.logoAvatarText}>{name.trim().charAt(0).toUpperCase()}</Text>
+      <View style={{ width: size, height: size, borderRadius: radius, backgroundColor: avatarColor(name), justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontSize: size * 0.36, fontWeight: '800' }}>{initials(name)}</Text>
       </View>
     );
   }
   return (
-    <View style={[styles.logoAvatar, { backgroundColor: '#fff', overflow: 'hidden' }]}>
+    <View style={{ width: size, height: size, borderRadius: radius, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
       <Image
         source={{ uri: `https://www.google.com/s2/favicons?sz=128&domain=${domain}` }}
-        style={{ width: 24, height: 24 }}
+        style={{ width: size * 0.62, height: size * 0.62 }}
         resizeMode="contain"
         onError={() => setFailed(true)}
       />
@@ -80,77 +91,34 @@ function CompanyLogo({ name, bgColor }) {
   );
 }
 
+function Avatar({ name, size = 44 }) {
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: avatarColor(name), justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ color: '#fff', fontSize: size * 0.38, fontWeight: '800' }}>{initials(name)}</Text>
+    </View>
+  );
+}
+
+const fmtMoney = (v) => (typeof v === 'number' ? v.toLocaleString('en-IN') : v);
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
 export default function App() {
+  // Data
   const [ipos, setIpos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Theme State: Default set to Light (White Mode)
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
-
-  const [activeTab, setActiveTab] = useState('IPO');
+  // Navigation / filters
+  const [activeTab, setActiveTab] = useState('IPO'); // IPO | Account | Allotment
   const [statusFilter, setStatusFilter] = useState('OPEN');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
-
+  const [isDarkMode, setIsDarkMode] = useState(true);
   const [blinkOn, setBlinkOn] = useState(true);
 
-  const [notifications, setNotifications] = useState([]);
-  const [notifModalOpen, setNotifModalOpen] = useState(false);
-  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
-
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [highlightedIpoId, setHighlightedIpoId] = useState(null);
-
-  const [showIntro, setShowIntro] = useState(true);
-  const introOpacity = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.sequence([
-      Animated.timing(introOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
-      Animated.delay(400),
-      Animated.timing(introOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
-    ]).start(() => setShowIntro(false));
-  }, []);
-
-  const [flippedIds, setFlippedIds] = useState({});
-  const [detailCache, setDetailCache] = useState({}); 
-  const flipAnims = useRef({}).current;
-  const getFlipAnim = (id) => {
-    if (!flipAnims[id]) flipAnims[id] = new Animated.Value(0);
-    return flipAnims[id];
-  };
-  const toggleFlip = (item) => {
-    const id = item.id;
-    const isFlipped = !!flippedIds[id];
-    Animated.timing(getFlipAnim(id), {
-      toValue: isFlipped ? 0 : 180,
-      duration: 400,
-      useNativeDriver: true,
-    }).start();
-    setFlippedIds(prev => ({ ...prev, [id]: !isFlipped }));
-
-    if (!isFlipped && !detailCache[id]) {
-      fetch(`${BASE_URL}/api/ipos/detail/${id}`)
-        .then(r => r.json())
-        .then(detail => {
-          setDetailCache(prev => ({
-            ...prev,
-            [id]: {
-              registrar: item.registrar && item.registrar !== 'Not available yet'
-                ? item.registrar
-                : (detail?.registrar?.name || 'Not available'),
-              lead_managers: (detail?.lead_managers && detail.lead_managers.length > 0)
-                ? detail.lead_managers.join(', ')
-                : 'Not available',
-            }
-          }));
-        })
-        .catch(() => {});
-    }
-  };
-
+  // Vault
   const [accounts, setAccounts] = useState([]);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -159,45 +127,94 @@ export default function App() {
   const [newClientId, setNewClientId] = useState('');
   const [newUpiId, setNewUpiId] = useState('');
 
+  // Allotment
   const [selectedAllotmentIpo, setSelectedAllotmentIpo] = useState(null);
   const [ipoPickerOpen, setIpoPickerOpen] = useState(false);
   const [checkingProgress, setCheckingProgress] = useState(null);
   const [allotmentResults, setAllotmentResults] = useState({});
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setBlinkOn(prev => !prev);
-    }, 600);
+  // Notifications / push
+  const [notifications, setNotifications] = useState([]);
+  const [notifModalOpen, setNotifModalOpen] = useState(false);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [pushStatus, setPushStatus] = useState({ ok: null, msg: 'Check ho raha hai...' });
 
+  // Search / settings
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [highlightedIpoId, setHighlightedIpoId] = useState(null);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+
+  // Card reverse (flip) popup
+  const [backItem, setBackItem] = useState(null);
+  const [detailCache, setDetailCache] = useState({});
+  const flipAnim = useRef(new Animated.Value(0)).current;
+
+  // App-open splash (user ki image) — native splash ke baad ~2 sec
+  const [showIntro, setShowIntro] = useState(true);
+  const introOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(1500),
+      Animated.timing(introOpacity, { toValue: 0, duration: 450, useNativeDriver: true }),
+    ]).start(() => setShowIntro(false));
+  }, []);
+
+  // ---------------- effects ----------------
+  useEffect(() => {
+    const timer = setInterval(() => setBlinkOn(prev => !prev), 700);
     loadSavedAccounts();
     loadSavedTheme();
     fetchLiveIPOs();
     fetchNotifications();
     registerForPushNotifications();
-
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    const onBackPress = () => {
-      if (activeTab !== 'IPO') {
-        setActiveTab('IPO');
-        return true;
-      }
-      return false; 
-    };
-    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-    return () => sub.remove();
-  }, [activeTab]);
-
+  // Har 30 sec me list + notifications khud refresh
   useEffect(() => {
     const pollTimer = setInterval(() => {
       fetchLiveIPOs();
       fetchNotifications();
-    }, 30000); 
-
+    }, 30000);
     return () => clearInterval(pollTimer);
   }, []);
+
+  // Android back button: pehle khule popup band karo, phir IPO tab par wapas
+  useEffect(() => {
+    const onBackPress = () => {
+      if (backItem) { closeBack(); return true; }
+      if (searchModalOpen) { setSearchModalOpen(false); return true; }
+      if (notifModalOpen) { setNotifModalOpen(false); return true; }
+      if (settingsModalOpen) { setSettingsModalOpen(false); return true; }
+      if (accountModalOpen) { setAccountModalOpen(false); return true; }
+      if (ipoPickerOpen) { setIpoPickerOpen(false); return true; }
+      if (activeTab !== 'IPO') { setActiveTab('IPO'); return true; }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [activeTab, backItem, searchModalOpen, notifModalOpen, settingsModalOpen, accountModalOpen, ipoPickerOpen]);
+
+  // ---------------- data ----------------
+  const fetchLiveIPOs = async () => {
+    try {
+      const resp = await fetch(API_URL);
+      const data = await resp.json();
+      setIpos(data);
+      setFetchError(null);
+      setSelectedAllotmentIpo(prev => {
+        if (prev) return data.find(x => x.id === prev.id) || prev; // fresh data (registrar_url etc.)
+        return data.find(x => x.status === 'CLOSED' && x.allotment_declared) || null;
+      });
+    } catch (e) {
+      console.log('Fetch Error:', e);
+      setFetchError('server_unreachable');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
   const fetchNotifications = async () => {
     try {
@@ -212,41 +229,6 @@ export default function App() {
     }
   };
 
-  const registerForPushNotifications = async () => {
-    try {
-      if (!Device.isDevice) return; 
-
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Default',
-          importance: Notifications.AndroidImportance.MAX,
-        });
-      }
-
-      const existing = await Notifications.getPermissionsAsync();
-      let finalStatus = existing.status;
-      if (finalStatus !== 'granted') {
-        const requested = await Notifications.requestPermissionsAsync();
-        finalStatus = requested.status;
-      }
-      if (finalStatus !== 'granted') return;
-
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId;
-      if (!projectId) return;
-
-      const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
-      const pushToken = tokenResponse.data;
-
-      await fetch(`${BASE_URL}/api/register-push-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: pushToken }),
-      }).catch(() => {});
-    } catch (e) {
-      console.log('Push Registration Error:', e);
-    }
-  };
-
   const openNotifications = async () => {
     setNotifModalOpen(true);
     setUnreadNotifCount(0);
@@ -255,12 +237,80 @@ export default function App() {
     }
   };
 
+  // Phone ke home-screen / notification-shade wale (real) push notifications
+  const registerForPushNotifications = async () => {
+    try {
+      if (!Device.isDevice) {
+        setPushStatus({ ok: false, msg: 'Asli phone chahiye (emulator me push nahi chalta)' });
+        return;
+      }
+      if (Constants.executionEnvironment === 'storeClient' || Constants.appOwnership === 'expo') {
+        setPushStatus({ ok: false, msg: 'Expo Go me push nahi chalta — development/production build (eas build) chahiye' });
+        return;
+      }
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'IPO Alerts',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#A43FE3',
+        });
+      }
+      const existing = await Notifications.getPermissionsAsync();
+      let finalStatus = existing.status;
+      if (finalStatus !== 'granted') {
+        const requested = await Notifications.requestPermissionsAsync();
+        finalStatus = requested.status;
+      }
+      if (finalStatus !== 'granted') {
+        setPushStatus({ ok: false, msg: 'Notification permission band hai — phone Settings → Apps → IPO → Notifications ON karo' });
+        return;
+      }
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+      if (!projectId) {
+        setPushStatus({ ok: false, msg: 'EAS projectId nahi mila (app.json extra.eas.projectId)' });
+        return;
+      }
+      const tokenResponse = await Notifications.getExpoPushTokenAsync({ projectId });
+      const resp = await fetch(`${BASE_URL}/api/register-push-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tokenResponse.data }),
+      });
+      if (!resp.ok) throw new Error(`Server ne token reject kiya (${resp.status})`);
+      setPushStatus({ ok: true, msg: 'Push ON — is phone ka token server par registered hai' });
+    } catch (e) {
+      const m = String(e?.message || e);
+      const fcm = /firebase|fcm|google-services|firebaseapp/i.test(m);
+      setPushStatus({
+        ok: false,
+        msg: fcm
+          ? 'Android push ke liye Firebase (FCM) setup baaki hai — neeche guide dekho. (' + m.slice(0, 80) + ')'
+          : m.slice(0, 180),
+      });
+    }
+  };
+
+  const sendTestPush = async () => {
+    try {
+      const resp = await fetch(`${BASE_URL}/api/test-push`);
+      const data = await resp.json();
+      Alert.alert(
+        'Test push',
+        data.devices === 0
+          ? 'Server par abhi koi device registered nahi hai. Pehle "Push ON" status aane do.'
+          : `Bheja gaya: ${data.devices} device(s)\n${data.summary || ''}\n\nPhone ke notification-shade me 5-10 sec me aana chahiye (app band karke dekho).`
+      );
+    } catch (e) {
+      Alert.alert('Test push', 'Server tak pahunch nahi paaye: ' + String(e?.message || e));
+    }
+  };
+
+  // ---------------- storage ----------------
   const loadSavedTheme = async () => {
     try {
       const savedTheme = await AsyncStorage.getItem('@app_theme');
-      if (savedTheme !== null) {
-        setIsDarkMode(savedTheme === 'dark');
-      }
+      if (savedTheme !== null) setIsDarkMode(savedTheme === 'dark');
     } catch (e) {
       console.log('Theme load error:', e);
     }
@@ -320,32 +370,92 @@ export default function App() {
     setAccountModalOpen(false);
   };
 
-  const deleteAccount = async (id) => {
-    const updated = accounts.filter(x => x.id !== id);
-    setAccounts(updated);
-    await AsyncStorage.setItem('@family_accounts', JSON.stringify(updated));
+  const deleteAccount = (acc) => {
+    Alert.alert('Delete account?', `${acc.name} (${acc.pan}) Vault se hata dein?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const updated = accounts.filter(x => x.id !== acc.id);
+          setAccounts(updated);
+          await AsyncStorage.setItem('@family_accounts', JSON.stringify(updated));
+        },
+      },
+    ]);
   };
 
-  const fetchLiveIPOs = async () => {
+  // ---------------- card reverse (flip) ----------------
+  const loadDetail = async (item) => {
+    if (detailCache[item.id]?.loaded) return;
     try {
-      const resp = await fetch(API_URL);
-      const data = await resp.json();
-      setIpos(data);
-      setFetchError(null);
-      if (!selectedAllotmentIpo) {
-        const firstEligible = data.find(x => x.status === 'CLOSED' && x.allotment_declared);
-        if (firstEligible) setSelectedAllotmentIpo(firstEligible);
-      }
+      const resp = await fetch(`${BASE_URL}/api/ipos/detail/${item.id}`);
+      const d = await resp.json();
+      setDetailCache(prev => ({
+        ...prev,
+        [item.id]: {
+          loaded: true,
+          registrar: d?.registrar?.name || null,
+          registrar_url: d?.registrar_url || null,
+          lead_managers: (d?.lead_managers && d.lead_managers.length > 0) ? d.lead_managers.join(', ') : null,
+        },
+      }));
     } catch (e) {
-      console.log('Fetch Error:', e);
-      setFetchError('server_unreachable');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setDetailCache(prev => ({ ...prev, [item.id]: { loaded: true, registrar: null, registrar_url: null, lead_managers: null } }));
     }
   };
 
-  const checkOneAccount = async (acc) => {
+  const openBack = (item) => {
+    setBackItem(item);
+    flipAnim.setValue(0);
+    Animated.timing(flipAnim, { toValue: 1, duration: 450, useNativeDriver: true }).start();
+    loadDetail(item);
+  };
+
+  const closeBack = () => {
+    Animated.timing(flipAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start(() => setBackItem(null));
+  };
+
+  // ---------------- registrar redirect ----------------
+  // Hamesha IPO ke ASLI registrar ki site (BSE/NSE ki generic page kabhi nahi)
+  const resolveRegistrarUrl = async (ipo) => {
+    if (!ipo) return null;
+    if (ipo.registrar_url) return ipo.registrar_url;
+    if (detailCache[ipo.id]?.registrar_url) return detailCache[ipo.id].registrar_url;
+    try {
+      const resp = await fetch(`${BASE_URL}/api/ipos/detail/${ipo.id}`);
+      const d = await resp.json();
+      setDetailCache(prev => ({
+        ...prev,
+        [ipo.id]: {
+          loaded: true,
+          registrar: d?.registrar?.name || null,
+          registrar_url: d?.registrar_url || null,
+          lead_managers: (d?.lead_managers && d.lead_managers.length > 0) ? d.lead_managers.join(', ') : null,
+        },
+      }));
+      return d?.registrar_url || null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const openRegistrarSite = async (ipo) => {
+    const url = await resolveRegistrarUrl(ipo);
+    if (url) {
+      Linking.openURL(url);
+    } else {
+      Alert.alert(
+        'Registrar abhi pata nahi',
+        'Is IPO ka registrar abhi source me nahi mila. Thodi der baad dobara try karo (app khud 3 min me dhoondhta rehta hai).'
+      );
+    }
+  };
+
+  // ---------------- allotment scan ----------------
+  // Har account ke liye alag request: server registrar site par OCR se captcha solve karke
+  // check karta hai. Captcha/OCR atke toh app khud dobara (max MAX_SCAN_ROUNDS) try karta hai.
+  const checkOneAccount = async (acc, registrarUrl) => {
     try {
       const resp = await fetch(ALLOTMENT_API, {
         method: 'POST',
@@ -354,35 +464,43 @@ export default function App() {
           ipo_name: selectedAllotmentIpo.name,
           lot_size: selectedAllotmentIpo.lot_size || 50,
           accounts: [{ id: acc.id, name: acc.name, pan: acc.pan }],
-          registrar_url: selectedAllotmentIpo.registrar_url || null
-        })
+          registrar_url: registrarUrl || null,
+        }),
       });
       const data = await resp.json();
-      if (data.success && data.results && data.results[acc.id]) {
-        return data.results[acc.id];
-      }
-      return { status: 'UNVERIFIED', shares: 'Registrar response nahi mila' };
+      if (data.success && data.results && data.results[acc.id]) return data.results[acc.id];
+      return { status: 'UNVERIFIED', shares: 'Registrar response nahi mila', retryable: true };
     } catch (e) {
       console.log('Allotment Engine Error:', e);
-      return { status: 'UNVERIFIED', shares: 'Server tak pahunch nahi paaye' };
+      return { status: 'UNVERIFIED', shares: 'Server tak pahunch nahi paaye', retryable: false };
     }
+  };
+
+  const checkAccountWithRetry = async (acc, idx, total, registrarUrl) => {
+    let res = null;
+    for (let round = 1; round <= MAX_SCAN_ROUNDS; round++) {
+      setCheckingProgress(`Checking ${idx + 1} of ${total} — ${acc.name}${round > 1 ? ` (retry ${round - 1})` : ''}`);
+      res = await checkOneAccount(acc, registrarUrl);
+      if (res.status !== 'UNVERIFIED' || !res.retryable) break;
+    }
+    return res;
   };
 
   const startBatchCheck = async () => {
     if (accounts.length === 0) {
-      Alert.alert('No Accounts', 'Please add at least one account in Vault');
+      Alert.alert('No Accounts', 'Pehle Vault me kam se kam ek PAN add karo');
       return;
     }
     if (!selectedAllotmentIpo) {
-      Alert.alert('Select IPO', 'Please select an IPO first');
+      Alert.alert('Select IPO', 'Pehle target IPO select karo');
       return;
     }
-
     setAllotmentResults({});
+    setCheckingProgress('Registrar dhoondh rahe hain...');
+    const registrarUrl = await resolveRegistrarUrl(selectedAllotmentIpo);
     for (let i = 0; i < accounts.length; i++) {
       const acc = accounts[i];
-      setCheckingProgress(`Checking ${i + 1} of ${accounts.length} — ${acc.name}`);
-      const res = await checkOneAccount(acc);
+      const res = await checkAccountWithRetry(acc, i, accounts.length, registrarUrl);
       setAllotmentResults(prev => ({ ...prev, [acc.id]: res }));
     }
     setCheckingProgress(null);
@@ -398,6 +516,7 @@ export default function App() {
     }
   };
 
+  // ---------------- derived ----------------
   const displayList = ipos
     .filter(item => {
       const matchStatus = item.status === statusFilter;
@@ -413,621 +532,558 @@ export default function App() {
       return (b.allotment_declared ? 1 : 0) - (a.allotment_declared ? 1 : 0);
     });
 
-  const allotmentEligibleIpos = ipos.filter(
-    item => item.status === 'CLOSED' && item.allotment_declared
-  );
+  const allotmentEligibleIpos = ipos.filter(item => item.status === 'CLOSED' && item.allotment_declared);
 
   const searchResults = searchQuery.trim()
     ? ipos.filter(item => item.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : [];
 
-  // Updated Theme with New White Mode Colors
-  const theme = {
-    bg: isDarkMode ? '#0B0F19' : '#F9F9FB',
-    cardBg: isDarkMode ? '#111827' : '#FFFFFF',
-    textMain: isDarkMode ? '#F8FAFC' : '#1A1A1A',
-    textSub: isDarkMode ? '#94A3B8' : '#6B7280',
-    border: isDarkMode ? '#1F2937' : '#E5E7EB',
-    headerBg: isDarkMode ? '#0B0F19' : '#FFFFFF',
-    innerBox: isDarkMode ? '#1E293B' : '#F4F5F7',
-    specKey: isDarkMode ? '#94A3B8' : '#6B7280',
-    specVal: isDarkMode ? '#F8FAFC' : '#1A1A1A',
-    terminalBg: isDarkMode ? '#064E3B' : '#F9FAFB',
-    terminalBorder: isDarkMode ? '#059669' : '#E5E7EB',
-    terminalText: isDarkMode ? '#34D399' : '#1A1A1A'
-  };
+  const theme = isDarkMode
+    ? {
+        bg: '#0F1118', headerBg: '#0F1118', cardBg: '#1A1C2B', innerBox: '#222439', border: '#2A2C42',
+        textMain: '#F4F4FA', textSub: '#9A9CB5', accent: '#A43FE3', accentText: '#B66BFF',
+        accentSoft: 'rgba(164,63,227,0.14)', tickerBorder: 'rgba(164,63,227,0.85)', blueBorder: '#2F4A8A',
+        good: '#34D399', bad: '#F87171', modalBg: '#171827', backdrop: 'rgba(5,5,12,0.80)',
+      }
+    : {
+        bg: '#F4F3FA', headerBg: '#FFFFFF', cardBg: '#FFFFFF', innerBox: '#F0EEF8', border: '#E3DFF0',
+        textMain: '#17142A', textSub: '#6B6884', accent: '#8E2FD0', accentText: '#8E2FD0',
+        accentSoft: 'rgba(142,47,208,0.10)', tickerBorder: 'rgba(142,47,208,0.7)', blueBorder: '#9DB4E8',
+        good: '#059669', bad: '#DC2626', modalBg: '#FFFFFF', backdrop: 'rgba(20,10,40,0.55)',
+      };
 
-  const BRAND_COLOR = '#8B5CF6'; // New Purple brand color
+  const liveBarColor = activeTab !== 'IPO'
+    ? theme.accent
+    : statusFilter === 'OPEN' ? '#22E06B' : statusFilter === 'UPCOMING' ? theme.accent : theme.textSub;
 
-  return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={theme.headerBg} />
+  // ---------------------------------------------------------------------------
+  // Render helpers
+  // ---------------------------------------------------------------------------
+  const renderIpoCard = ({ item }) => {
+    const hasGmp = item.gmp > 0;
+    const isClosed = item.status === 'CLOSED';
+    const isMain = item.category !== 'SME';
+    const priceColor = (v) => {
+      const s = String(v || '');
+      if (!s || s.includes('--')) return theme.textMain;
+      return s.includes('-') ? theme.bad : theme.good;
+    };
+    const registrarKnown = item.registrar && item.registrar !== 'Not available yet';
 
-      {showIntro && (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            styles.introOverlay,
-            { opacity: introOpacity, zIndex: 999 }
-          ]}
-        >
-          <Text style={[styles.introLogo, { color: BRAND_COLOR }]}>GB</Text>
-          <Text style={styles.introSub}>POWERED BY GB</Text>
-        </Animated.View>
-      )}
-
-      {/* TOP HEADER */}
-      <View style={[styles.topBar, { backgroundColor: theme.headerBg, borderBottomColor: theme.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={[styles.radarIconBox, { backgroundColor: theme.innerBox, borderColor: theme.border }]}>
-            <View style={[styles.radarDot, { backgroundColor: BRAND_COLOR, opacity: blinkOn ? 1 : 0.2 }]} />
+    return (
+      <View style={[styles.card, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+        <View style={styles.cardTop}>
+          <CompanyLogo name={item.name} size={54} />
+          <View style={styles.cardTitleCol}>
+            <View style={[styles.catBadge, { backgroundColor: isMain ? '#2A4A82' : '#D9801C' }]}>
+              <Text style={styles.catBadgeText}>{isMain ? 'MAINBOARD' : 'SME'}</Text>
+            </View>
+            <Text style={[styles.cardName, { color: theme.textMain }]} numberOfLines={2}>{item.name}</Text>
+            <View style={styles.dateRow}>
+              <Ionicons name="calendar-outline" size={14} color={theme.textSub} />
+              <Text style={[styles.dateText, { color: theme.textMain }]}>{item.date_range}</Text>
+            </View>
           </View>
-          <View>
-            <Text style={[styles.appName, { color: theme.textMain }]}>GB</Text>
-          </View>
+          <TouchableOpacity style={styles.flipBtn} onPress={() => openBack(item)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Ionicons name="sync-outline" size={19} color={theme.textSub} />
+          </TouchableOpacity>
         </View>
 
-        <View style={styles.topRightActions}>
-          <TouchableOpacity
-            style={[styles.iconBtn, { backgroundColor: theme.innerBox, marginRight: 8 }]}
-            onPress={() => setSearchModalOpen(true)}
-          >
-            <Ionicons name="search-outline" size={18} color={theme.textSub} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.iconBtn, { backgroundColor: theme.innerBox, marginRight: 8 }]}
-            onPress={openNotifications}
-          >
-            <Ionicons name="notifications-outline" size={18} color={theme.textSub} />
-            {unreadNotifCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.notifBadgeText}>{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</Text>
+        {isClosed ? (
+          <>
+            <View style={[styles.perfBox, { borderColor: theme.border }]}>
+              <View style={[styles.perfCol, { borderRightWidth: 1, borderRightColor: theme.border }]}>
+                <Text style={[styles.perfLabel, { color: theme.textSub }]}>LISTING PRICE</Text>
+                <Text style={[styles.perfValue, { color: priceColor(item.listing_price) }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {item.listing_price}
+                </Text>
               </View>
-            )}
-          </TouchableOpacity>
+              <View style={styles.perfCol}>
+                <Text style={[styles.perfLabel, { color: theme.textSub }]}>CURRENT CMP</Text>
+                <Text style={[styles.perfValue, { color: priceColor(item.current_price) }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {item.current_price}
+                </Text>
+              </View>
+            </View>
 
-          <TouchableOpacity
-            style={[styles.iconBtn, { backgroundColor: theme.innerBox }]}
-            onPress={() => setSettingsModalOpen(true)}
-          >
-            <Ionicons name="settings-outline" size={18} color={theme.textSub} />
+            <View style={styles.footerRow}>
+              <Text style={[styles.footerTxt, { color: theme.textSub }]}>
+                Allotment: <Text style={[styles.footerVal, { color: theme.textMain }]}>{item.allotment_date}</Text>
+              </Text>
+              <Text style={[styles.footerTxt, { color: theme.textSub }]}>
+                Listing: <Text style={[styles.footerVal, { color: theme.textMain }]}>{item.listing_date}</Text>
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.primaryBtn, { backgroundColor: theme.accent }]}
+              activeOpacity={0.85}
+              onPress={() => openRegistrarSite(item)}
+            >
+              <Text style={styles.primaryBtnText}>CHECK ALLOTMENT</Text>
+            </TouchableOpacity>
+            {registrarKnown && (
+              <Text style={[styles.registrarHint, { color: theme.textSub }]}>Registrar: {item.registrar}</Text>
+            )}
+          </>
+        ) : (
+          <>
+            <View style={[styles.ticker, { borderColor: theme.tickerBorder }]}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.tickerLabelRow}>
+                  <View style={[styles.tickerDot, { backgroundColor: theme.accent, opacity: blinkOn ? 1 : 0.4 }]} />
+                  <Text style={[styles.tickerLabel, { color: theme.textMain }]}>LIVE GMP TICKER</Text>
+                </View>
+                <Text style={[styles.tickerUpdated, { color: theme.textSub }]}>Updated: {item.last_heard}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={[styles.tickerValue, { color: theme.textMain }]}>{hasGmp ? `+₹${item.gmp}` : '--'}</Text>
+                <Text style={[styles.tickerGain, { color: theme.accentText }]}>
+                  {hasGmp ? `${item.gmp_percentage}% EST. GAIN` : 'NOT DECLARED'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.specRow}>
+              <View style={[styles.specCol, { borderRightWidth: 1, borderRightColor: theme.border }]}>
+                <Text style={[styles.specLabel, { color: theme.textSub }]}>ISSUE PRICE:</Text>
+                <Text style={[styles.specValue, { color: theme.textMain }]}>{item.price}</Text>
+              </View>
+              <View style={[styles.specCol, { borderRightWidth: 1, borderRightColor: theme.border }]}>
+                <Text style={[styles.specLabel, { color: theme.textSub }]}>LOT SIZE:</Text>
+                <Text style={[styles.specValue, { color: theme.textMain }]}>{item.lot_size} sh</Text>
+              </View>
+              <View style={styles.specCol}>
+                <Text style={[styles.specLabel, { color: theme.textSub }]}>ISSUE SIZE:</Text>
+                <Text style={[styles.specValue, { color: theme.textMain }]}>{item.issue_size}</Text>
+              </View>
+            </View>
+
+            <View style={styles.profitRow}>
+              <View style={[styles.profitBox, { backgroundColor: theme.innerBox, borderColor: theme.blueBorder }]}>
+                <Text style={[styles.profitLabel, { color: theme.textSub }]}>EST. RETAIL PROFIT:</Text>
+                <Text style={[styles.profitValue, { color: theme.accentText }]}>
+                  {hasGmp && item.retail_profit != null ? `₹${fmtMoney(item.retail_profit)}` : '--'}
+                </Text>
+              </View>
+              <View style={[styles.profitBox, { backgroundColor: theme.innerBox, borderColor: theme.blueBorder }]}>
+                <Text style={[styles.profitLabel, { color: theme.textSub }]}>EST. HNI PROFIT:</Text>
+                <Text style={[styles.profitValue, { color: theme.accentText }]}>
+                  {hasGmp && item.hni_profit != null ? `₹${fmtMoney(item.hni_profit)}` : '--'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.footerRow}>
+              <Text style={[styles.footerTxt, { color: theme.textSub }]}>
+                Allotment: <Text style={[styles.footerVal, { color: theme.textMain }]}>{item.allotment_date}</Text>
+              </Text>
+              <Text style={[styles.footerTxt, { color: theme.textSub }]}>
+                Listing: <Text style={[styles.footerVal, { color: theme.textMain }]}>{item.listing_date}</Text>
+              </Text>
+              {hasGmp && (
+                <Text style={[styles.footerTxt, { color: theme.textSub }]}>
+                  OMP: <Text style={[styles.footerVal, { color: theme.textMain }]}>{item.gmp}</Text>
+                </Text>
+              )}
+            </View>
+          </>
+        )}
+      </View>
+    );
+  };
+
+  const pillFor = (res) => {
+    if (!res) return { bg: theme.innerBox, color: theme.textSub, label: 'PENDING', icon: null };
+    if (res.status === 'ALLOTTED') return { bg: '#1F8A4C', color: '#fff', label: 'ALLOTTED', icon: 'checkmark' };
+    if (res.status === 'NON_ALLOTTEE') return { bg: '#B3261E', color: '#fff', label: 'NOT ALLOTTED', icon: null };
+    if (res.status === 'NOT_APPLIED') return { bg: '#3A3C55', color: '#fff', label: 'NOT APPLIED', icon: null };
+    return { bg: '#C27A0E', color: '#fff', label: 'COULD NOT VERIFY', icon: null };
+  };
+
+  const renderAccountResult = ({ item }) => {
+    const res = allotmentResults[item.id];
+    const pill = pillFor(res);
+    return (
+      <View style={[styles.resultCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+        <Avatar name={item.name} size={46} />
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={[styles.resultName, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
+          <View style={[styles.statusPill, { backgroundColor: pill.bg }]}>
+            <Text style={[styles.statusPillText, { color: pill.color }]}>{pill.label}</Text>
+            {pill.icon && <Ionicons name={pill.icon} size={13} color="#fff" style={{ marginLeft: 4 }} />}
+          </View>
+          {res && res.status === 'UNVERIFIED' && res.shares ? (
+            <Text style={[styles.resultNote, { color: theme.textSub }]} numberOfLines={2}>{res.shares}</Text>
+          ) : null}
+        </View>
+        <View style={{ alignItems: 'flex-end', justifyContent: 'space-between', alignSelf: 'stretch' }}>
+          {res && res.status === 'ALLOTTED' ? (
+            <Ionicons name="checkmark-circle" size={24} color="#22C55E" />
+          ) : res && res.status === 'NON_ALLOTTEE' ? (
+            <Ionicons name="close-circle" size={24} color="#EF4444" />
+          ) : (
+            <View style={{ height: 24 }} />
+          )}
+          <TouchableOpacity style={[styles.shareBtn, { backgroundColor: theme.innerBox }]} onPress={() => shareStatus(item, res)}>
+            <Ionicons name="share-social-outline" size={15} color={theme.textMain} />
+            <Text style={[styles.shareBtnText, { color: theme.textMain }]}>Share</Text>
           </TouchableOpacity>
         </View>
       </View>
+    );
+  };
 
-      {/* IPO TAB */}
-      {activeTab === 'IPO' && (
-        <View style={{ flex: 1 }}>
-          <View style={[styles.pillTabBar, { backgroundColor: theme.bg }]}>
-            {['OPEN', 'UPCOMING', 'CLOSED'].map(tab => {
-              const isActive = statusFilter === tab;
-              return (
-                <TouchableOpacity
-                  key={tab}
-                  style={[
-                    styles.pillTabBtn,
-                    { backgroundColor: theme.innerBox },
-                    isActive && { backgroundColor: BRAND_COLOR }
-                  ]}
-                  onPress={() => setStatusFilter(tab)}
-                >
-                  <Text style={[styles.pillTabText, { color: theme.textSub }, isActive && styles.pillTabTextActive]}>
-                    {tab === 'OPEN' ? '🟢 OPEN' : tab}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+  const subCells = (it) => {
+    const sub = it?.subscription || {};
+    const cells = [
+      ['QIB', sub.qib],
+      ['HNI', sub.hni],
+      ['RETAIL', sub.retail],
+      ['TOTAL', sub.total],
+    ];
+    // Employee / Shareholder quota — sirf unhi IPOs me jinke liye data aaya ho
+    if (sub.emp && sub.emp !== 'N/A' && sub.emp !== '--') cells.push(['EMPLOYEE', sub.emp]);
+    if (sub.sh && sub.sh !== 'N/A' && sub.sh !== '--') cells.push(['SHAREHOLDER', sub.sh]);
+    return cells;
+  };
+
+  const tabs = [
+    { key: 'IPO', label: 'Terminal' },
+    { key: 'Account', label: 'Vault' },
+    { key: 'Allotment', label: 'Allotment' },
+  ];
+
+  // ---------------------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------------------
+  return (
+    <View style={[styles.root, { backgroundColor: theme.bg }]}>
+      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={theme.headerBg} />
+      <SafeAreaView style={{ flex: 1 }}>
+        {/* HEADER */}
+        <View style={[styles.topBar, { backgroundColor: theme.headerBg }]}>
+          <View style={styles.brandRow}>
+            <Text style={[styles.brandText, { color: theme.textMain }]}>IPO</Text>
+            <View
+              style={[
+                styles.liveBar,
+                { backgroundColor: liveBarColor, shadowColor: liveBarColor, opacity: blinkOn ? 1 : 0.45 },
+              ]}
+            />
           </View>
+          <View style={styles.topRight}>
+            <TouchableOpacity style={[styles.iconBtn, { backgroundColor: theme.innerBox, borderColor: theme.border }]} onPress={() => setSearchModalOpen(true)}>
+              <Ionicons name="search-outline" size={19} color={theme.textMain} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.iconBtn, { backgroundColor: theme.innerBox, borderColor: theme.border }]} onPress={openNotifications}>
+              <Ionicons name="notifications-outline" size={19} color={theme.textMain} />
+              {unreadNotifCount > 0 && (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>{unreadNotifCount > 9 ? '9+' : unreadNotifCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.iconBtn, { backgroundColor: theme.innerBox, borderColor: theme.border }]} onPress={() => setSettingsModalOpen(true)}>
+              <Ionicons name="settings-outline" size={19} color={theme.textMain} />
+            </TouchableOpacity>
+          </View>
+        </View>
 
-          <View style={[styles.filterChipRow, { borderBottomColor: theme.border }]}>
-            <View style={{ flexDirection: 'row' }}>
+        {/* ===================== TERMINAL ===================== */}
+        {activeTab === 'IPO' && (
+          <View style={{ flex: 1 }}>
+            <View style={styles.pillTabs}>
+              {['OPEN', 'UPCOMING', 'CLOSED'].map(tab => {
+                const active = statusFilter === tab;
+                return (
+                  <TouchableOpacity
+                    key={tab}
+                    style={[styles.pillTab, active && { backgroundColor: theme.accent }]}
+                    onPress={() => { setStatusFilter(tab); setHighlightedIpoId(null); }}
+                  >
+                    <Text style={[styles.pillTabText, { color: active ? '#fff' : theme.accentText }]}>{tab}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.chipsRow}>
               {[
                 { key: 'ALL', label: 'All' },
                 { key: 'MAINBOARD', label: 'Mainboard' },
-                { key: 'SME', label: 'SME' }
+                { key: 'SME', label: 'SME' },
               ].map(cat => {
-                const isSelected = categoryFilter === cat.key;
+                const active = categoryFilter === cat.key;
                 return (
                   <TouchableOpacity
                     key={cat.key}
                     style={[
                       styles.chip,
-                      { backgroundColor: theme.innerBox },
-                      isSelected && { borderWidth: 1, borderColor: BRAND_COLOR }
+                      { borderColor: active ? theme.accent : theme.border, backgroundColor: active ? theme.accentSoft : 'transparent' },
                     ]}
                     onPress={() => setCategoryFilter(cat.key)}
                   >
-                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && { color: BRAND_COLOR }]}>
-                      {cat.label}
-                    </Text>
+                    <Text style={[styles.chipText, { color: active ? theme.accentText : theme.textMain }]}>{cat.label}</Text>
                   </TouchableOpacity>
                 );
               })}
+              <Text style={[styles.countText, { color: theme.textSub }]}>{displayList.length} Active IPOs</Text>
             </View>
-            <Text style={{ color: theme.textSub, fontSize: 11, fontWeight: '700' }}>
-              {displayList.length} Active IPOs
-            </Text>
-          </View>
 
-          {loading ? (
-            <View style={styles.centerBox}>
-              <ActivityIndicator size="large" color={BRAND_COLOR} />
-              <Text style={{ color: theme.textSub, marginTop: 12, fontSize: 13 }}>Syncing Live Market GMP...</Text>
-            </View>
-          ) : fetchError && ipos.length === 0 ? (
-            <View style={styles.centerBox}>
-              <Ionicons name="cloud-offline-outline" size={48} color={theme.textSub} />
-              <Text style={{ color: theme.textMain, marginTop: 14, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>
-                Server abhi jaag raha hai
-              </Text>
-              <Text style={{ color: theme.textSub, marginTop: 6, fontSize: 12, textAlign: 'center', paddingHorizontal: 30 }}>
-                Free hosting server kuch der inactive rehne par so jaata hai. Pehli request ko 30-50 second lag sakte hain.
-              </Text>
-              <TouchableOpacity
-                style={[styles.batchTriggerBtn, { marginTop: 18, paddingHorizontal: 30, backgroundColor: BRAND_COLOR }]}
-                onPress={() => { setLoading(true); fetchLiveIPOs(); }}
-              >
-                <Text style={styles.primaryBtnText}>RETRY</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <FlatList
-              data={displayList}
-              keyExtractor={item => item.id}
-              contentContainerStyle={{ padding: 12, paddingBottom: 25 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchLiveIPOs(); }} tintColor={BRAND_COLOR} />}
-              ListEmptyComponent={
-                <View style={[styles.centerBox, { marginTop: 60 }]}>
-                  <Ionicons name="file-tray-outline" size={40} color={theme.textSub} />
-                  <Text style={{ color: theme.textSub, marginTop: 10, fontSize: 13 }}>
-                    Is filter me abhi koi IPO nahi hai
-                  </Text>
-                </View>
-              }
-              renderItem={({ item }) => {
-                const hasGmp = item.gmp > 0;
-                const isClosed = item.status === 'CLOSED';
-
-                return (
-                  <View style={[styles.cardContainer, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-                    <View style={styles.cardHeader}>
-                      <CompanyLogo name={item.name} bgColor={avatarColor(item.name)} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.cardTitle, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
-                        <Text style={[styles.cardDateRange, { color: theme.textSub, marginTop: 3 }]}>📅 {item.date_range}</Text>
-                      </View>
-                      <View style={[styles.tagBadge, item.category === 'SME' ? styles.tagSme : styles.tagMain]}>
-                        <Text style={styles.tagBadgeText}>{item.category}</Text>
-                      </View>
-                      <TouchableOpacity
-                        style={styles.flipIconBtn}
-                        onPress={() => toggleFlip(item)}
-                      >
-                        <Ionicons name="sync-outline" size={16} color={theme.textSub} />
-                      </TouchableOpacity>
-                    </View>
-
-                    {flippedIds[item.id] && (
-                      <Animated.View
-                        style={[
-                          StyleSheet.absoluteFill,
-                          styles.cardBackOverlay,
-                          { backgroundColor: theme.cardBg, opacity: getFlipAnim(item.id).interpolate({ inputRange: [0, 180], outputRange: [0, 1] }) }
-                        ]}
-                      >
-                        <View style={styles.cardBackHeader}>
-                          <Text style={[styles.cardTitle, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
-                          <TouchableOpacity onPress={() => toggleFlip(item)}>
-                            <Ionicons name="close-circle" size={22} color={theme.textSub} />
-                          </TouchableOpacity>
-                        </View>
-                        <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 8 }]}>LIVE SUBSCRIPTION (QIB / HNI / RETAIL)</Text>
-                        {['qib', 'hni', 'retail', 'emp', 'sh', 'total'].map(key => {
-                          const val = item.subscription?.[key] || 'N/A';
-                          
-                          if ((key === 'emp' || key === 'sh') && (val === 'N/A' || val === '--')) {
-                            return null;
-                          }
-                          const SUB_LABELS = {
-                            qib: 'QIB (INSTITUTIONAL)', hni: 'HNI / NII', retail: 'RETAIL',
-                            emp: 'EMPLOYEE QUOTA', sh: 'SHAREHOLDER QUOTA', total: 'TOTAL',
-                          };
-
-                          return (
-                            <View key={key} style={[styles.darkTableRow, { borderColor: theme.border }]}>
-                              <Text style={[styles.tableTxt, { color: theme.textSub }]}>{SUB_LABELS[key]}</Text>
-                              <Text style={[styles.tableTxtBold, { color: key === 'total' ? BRAND_COLOR : theme.textMain }]}>
-                                {val}
-                              </Text>
-                            </View>
-                          );
-                        })}
-                        {!item.subscription && (
-                          <Text style={{ color: theme.textSub, fontSize: 12, marginTop: 10 }}>
-                            Subscription data OPEN/CLOSED IPOs ke liye hi available hoti hai.
-                          </Text>
-                        )}
-                        <Text style={[styles.specKey, { color: theme.specKey, marginTop: 14, marginBottom: 6 }]}>REGISTRAR & LEAD MANAGER</Text>
-                        <Text style={{ color: theme.textMain, fontSize: 12, marginBottom: 4 }}>
-                          {detailCache[item.id]?.registrar || item.registrar || 'Loading...'}
-                        </Text>
-                        <Text style={{ color: theme.textSub, fontSize: 11 }}>
-                          {detailCache[item.id]?.lead_managers || '—'}
-                        </Text>
-                      </Animated.View>
-                    )}
-
-                    <View style={[styles.gmpTerminalBox, { backgroundColor: theme.terminalBg, borderColor: theme.terminalBorder }]}>
-                      <View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <View
-                            style={[
-                              styles.liveBlinkCircle,
-                              { backgroundColor: blinkOn ? '#10B981' : theme.border }
-                            ]}
-                          />
-                          <Text style={[styles.gmpTerminalLabel, { color: BRAND_COLOR }]}>LIVE GMP TICKER</Text>
-                        </View>
-                        <Text style={[styles.lastHeardText, { color: theme.textSub }]}>Updated: {item.last_heard}</Text>
-                      </View>
-
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={[styles.gmpMainValue, { color: theme.terminalText }, !hasGmp && { color: theme.textSub }]}>
-                          {hasGmp ? `+₹${item.gmp}` : '--'}
-                        </Text>
-                        <Text style={[styles.gmpPctBadge, { color: theme.terminalText }, !hasGmp && { color: theme.textSub }]}>
-                          {hasGmp ? `${item.gmp_percentage}% EST. GAIN` : 'NOT DECLARED'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={[styles.specGrid, { backgroundColor: theme.innerBox }]}>
-                      <View style={styles.specCol}>
-                        <Text style={[styles.specKey, { color: theme.specKey }]}>ISSUE PRICE</Text>
-                        <Text style={[styles.specVal, { color: theme.specVal }]}>{item.price}</Text>
-                      </View>
-                      <View style={styles.specCol}>
-                        <Text style={[styles.specKey, { color: theme.specKey }]}>LOT SIZE</Text>
-                        <Text style={[styles.specVal, { color: theme.specVal }]}>{item.lot_size} sh</Text>
-                      </View>
-                      <View style={styles.specCol}>
-                        <Text style={[styles.specKey, { color: theme.specKey }]}>ISSUE SIZE</Text>
-                        <Text style={[styles.specVal, { color: theme.specVal }]}>{item.issue_size}</Text>
-                      </View>
-                    </View>
-
-                    {isClosed ? (
-                      <View style={[styles.closedPerformanceBox, { backgroundColor: theme.innerBox }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.specKey, { color: theme.specKey }]}>LISTING PRICE</Text>
-                          <Text style={[styles.brandHighlight, { color: BRAND_COLOR }]}>{item.listing_price}</Text>
-                        </View>
-                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                          <Text style={[styles.specKey, { color: theme.specKey }]}>CURRENT CMP (BSE)</Text>
-                          <Text style={[styles.brandHighlight, { color: BRAND_COLOR }]}>{item.current_price}</Text>
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={[styles.profitBanner, { backgroundColor: theme.innerBox }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.specKey, { color: theme.specKey }]}>EST. RETAIL PROFIT</Text>
-                          <Text style={[styles.profitAmount, { color: BRAND_COLOR }]}>
-                            {hasGmp ? `₹${item.retail_profit.toLocaleString('en-IN')}` : '--'}
-                          </Text>
-                        </View>
-                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                          <Text style={[styles.specKey, { color: theme.specKey }]}>EST. HNI PROFIT</Text>
-                          <Text style={[styles.profitAmount, { color: BRAND_COLOR }]}>
-                            {hasGmp ? `₹${item.hni_profit.toLocaleString('en-IN')}` : '--'}
-                          </Text>
-                        </View>
-                      </View>
-                    )}
-
-                    <View style={styles.timelineRow}>
-                      <Text style={[styles.timelineText, { color: theme.textSub }]}>Allotment: <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>{item.allotment_date}</Text></Text>
-                      <Text style={[styles.timelineText, { color: theme.textSub }]}>Listing: <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>{item.listing_date}</Text></Text>
-                    </View>
-
-                    <View style={styles.actionRow}>
-                      {isClosed ? (
-                        <TouchableOpacity
-                          style={[styles.primaryActionBtn, { backgroundColor: BRAND_COLOR, flex: 1 }]}
-                          onPress={() => {
-                            const registrarName = item.registrar ? item.registrar.toLowerCase() : '';
-                            if (item.registrar_url) {
-                              Linking.openURL(item.registrar_url);
-                            } else if (registrarName.includes('link intime')) {
-                              Linking.openURL('https://linkintime.co.in/initial_offer/public-issues.html');
-                            } else if (registrarName.includes('kfintech') || registrarName.includes('karvy')) {
-                              Linking.openURL('https://kosmic.kfintech.com/ipostatus/');
-                            } else {
-                              Linking.openURL('https://www.bseindia.com/investors/appli_check.aspx');
-                            }
-                          }}
-                        >
-                          <Text style={styles.primaryBtnText}>
-                            {item.registrar_url ? `CHECK ON ${item.registrar?.toUpperCase() || 'REGISTRAR'}` : 'CHECK ALLOTMENT'}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                  </View>
-                );
-              }}
-            />
-          )}
-        </View>
-      )}
-
-      {/* ACCOUNTS TAB */}
-      {activeTab === 'Account' && (
-        <View style={{ flex: 1, padding: 14 }}>
-          <View style={styles.accountHeader}>
-            <View>
-              <Text style={[styles.accountTitle, { color: theme.textMain }]}>Family Vault ({accounts.length})</Text>
-              <Text style={[styles.accountSub, { color: theme.textSub }]}>Manage Demat & PANs for Instant Allotments</Text>
-            </View>
-            <TouchableOpacity style={[styles.addPanBtn, { backgroundColor: BRAND_COLOR }]} onPress={() => setAccountModalOpen(true)}>
-              <Ionicons name="add" size={18} color="#FFF" />
-              <Text style={[styles.addPanText, { color: '#FFF' }]}>Add PAN</Text>
-            </TouchableOpacity>
-          </View>
-
-          <FlatList
-            data={accounts}
-            keyExtractor={item => item.id}
-            renderItem={({ item }) => (
-              <View style={[styles.accountCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-                <View>
-                  <Text style={[styles.panHolderName, { color: theme.textMain }]}>{item.name}</Text>
-                  <Text style={[styles.panNumber, { color: theme.textSub }]}>{item.pan}</Text>
-                </View>
-                <TouchableOpacity style={styles.deleteBtn} onPress={() => deleteAccount(item.id)}>
-                  <Ionicons name="trash-outline" size={18} color="#EF4444" />
+            {loading ? (
+              <View style={styles.centerBox}>
+                <ActivityIndicator size="large" color={theme.accent} />
+                <Text style={{ color: theme.textSub, marginTop: 12, fontSize: 13 }}>Syncing live market data...</Text>
+              </View>
+            ) : fetchError && ipos.length === 0 ? (
+              <View style={styles.centerBox}>
+                <Ionicons name="cloud-offline-outline" size={48} color={theme.textSub} />
+                <Text style={{ color: theme.textMain, marginTop: 14, fontSize: 15, fontWeight: '700' }}>Server abhi jaag raha hai</Text>
+                <Text style={{ color: theme.textSub, marginTop: 6, fontSize: 12, textAlign: 'center', paddingHorizontal: 30 }}>
+                  Free hosting server kuch der inactive rehne par so jaata hai. Pehli request me 30-50 second lag sakte hain.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.primaryBtn, { backgroundColor: theme.accent, marginTop: 18, paddingHorizontal: 40 }]}
+                  onPress={() => { setLoading(true); fetchLiveIPOs(); }}
+                >
+                  <Text style={styles.primaryBtnText}>RETRY</Text>
                 </TouchableOpacity>
               </View>
-            )}
-          />
-        </View>
-      )}
-
-      {/* ALLOTMENT TAB */}
-      {activeTab === 'Allotment' && (
-        <View style={{ flex: 1, padding: 14 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 }}>
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', padding: 6 }}
-              onPress={() => setActiveTab('IPO')}
-            >
-              <Ionicons name="close-circle" size={20} color={theme.textSub} />
-              <Text style={{ color: theme.textSub, marginLeft: 4, fontSize: 12, fontWeight: '700' }}>CLOSE</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.ipoSelectBtn, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
-            onPress={() => setIpoPickerOpen(true)}
-          >
-            <View>
-              <Text style={[styles.specKey, { color: theme.specKey }]}>TARGET IPO</Text>
-              <Text style={[styles.selectedIpoName, { color: theme.textMain }]}>
-                {selectedAllotmentIpo ? selectedAllotmentIpo.name : 'Select an IPO'}
-              </Text>
-            </View>
-            <Ionicons name="chevron-down" size={20} color={theme.textSub} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.batchTriggerBtn, { backgroundColor: BRAND_COLOR }]}
-            onPress={startBatchCheck}
-            disabled={checkingProgress !== null}
-          >
-            {checkingProgress ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryBtnText}>{checkingProgress}</Text>
-              </View>
             ) : (
-              <Text style={styles.primaryBtnText}>
-                AUTO-SCAN ALLOTMENT ({accounts.length} ACCOUNTS)
-              </Text>
+              <FlatList
+                data={displayList}
+                keyExtractor={item => item.id}
+                renderItem={renderIpoCard}
+                contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 20, paddingTop: 4 }}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={refreshing}
+                    onRefresh={() => { setRefreshing(true); fetchLiveIPOs(); }}
+                    tintColor={theme.accent}
+                  />
+                }
+                ListEmptyComponent={
+                  <View style={[styles.centerBox, { marginTop: 60 }]}>
+                    <Ionicons name="file-tray-outline" size={40} color={theme.textSub} />
+                    <Text style={{ color: theme.textSub, marginTop: 10, fontSize: 13 }}>Is filter me abhi koi IPO nahi hai</Text>
+                  </View>
+                }
+              />
             )}
-          </TouchableOpacity>
-          <Text style={{ color: theme.textSub, fontSize: 11, textAlign: 'center', marginTop: 6, marginBottom: 8 }}>
-            Automated check har registrar ke liye kaam nahi karta (CAPTCHA ki wajah se) — agar "COULD NOT VERIFY" aaye, neeche diye link se khud check kar lo.
-          </Text>
+          </View>
+        )}
 
-          {selectedAllotmentIpo?.registrar_url && (
-            <TouchableOpacity
-              style={styles.registrarLinkBtn}
-              onPress={() => Linking.openURL(selectedAllotmentIpo.registrar_url)}
-            >
-              <Ionicons name="open-outline" size={14} color="#3B82F6" />
-              <Text style={styles.registrarLinkText}>
-                Ya seedha {selectedAllotmentIpo.registrar} ki official site pe check karo
-              </Text>
-            </TouchableOpacity>
-          )}
-
+        {/* ===================== VAULT ===================== */}
+        {activeTab === 'Account' && (
           <FlatList
             data={accounts}
             keyExtractor={item => item.id}
-            renderItem={({ item }) => {
-              const res = allotmentResults[item.id];
-              let pillBg = styles.statusNotApplied;
-              let pillTextColor = theme.textSub;
-              let label = 'CHECK ABOVE ⬆';
-              if (res) {
-                if (res.status === 'ALLOTTED') {
-                  pillBg = { backgroundColor: 'rgba(16,185,129,0.15)' };
-                  pillTextColor = '#10B981';
-                  label = 'ALLOTTED';
-                } else if (res.status === 'NON_ALLOTTEE') {
-                  pillBg = { backgroundColor: 'rgba(239,68,68,0.15)' };
-                  pillTextColor = '#EF4444';
-                  label = 'NOT ALLOTTED';
-                } else if (res.status === 'NOT_APPLIED') {
-                  label = 'NOT APPLIED';
-                } else {
-                  pillBg = { backgroundColor: 'rgba(245,158,11,0.12)' };
-                  pillTextColor = '#F59E0B';
-                  label = 'COULD NOT VERIFY';
-                }
-              }
-
-              return (
-                <View style={[styles.allotCardItem, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.panHolderName, { color: theme.textMain }]}>{item.name}</Text>
-                    <Text style={[styles.panNumber, { color: theme.textSub }]}>{item.pan}</Text>
-                  </View>
-
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={[styles.statusPill, pillBg]}>
-                      <Text style={[styles.statusPillText, { color: pillTextColor }]}>
-                        {label}
-                      </Text>
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+            ListHeaderComponent={
+              <View>
+                <View style={styles.pageTitleRow}>
+                  <Text style={[styles.pageTitle, { color: theme.textMain }]}>Vault ({accounts.length})</Text>
+                  <TouchableOpacity style={[styles.outlineBtn, { borderColor: theme.accent }]} onPress={() => setAccountModalOpen(true)}>
+                    <Text style={[styles.outlineBtnText, { color: theme.accentText }]}>Add PAN</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={[styles.pageSub, { color: theme.textSub }]}>Saved Family Accounts</Text>
+              </View>
+            }
+            ListEmptyComponent={
+              <Text style={{ color: theme.textSub, textAlign: 'center', padding: 30 }}>Koi account nahi hai. "Add PAN" dabao.</Text>
+            }
+            renderItem={({ item }) => (
+              <View style={[styles.vaultCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+                <Avatar name={item.name} size={46} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[styles.vaultName, { color: theme.textMain }]} numberOfLines={1}>{item.name}</Text>
+                  <Text style={[styles.vaultPan, { color: theme.textSub }]}>PAN: {item.pan}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end', justifyContent: 'space-between', alignSelf: 'stretch' }}>
+                  {item.accountType ? (
+                    <View style={[styles.demateBadge, { backgroundColor: item.accountType === 'NSDL' ? '#6B4416' : '#1E3A66' }]}>
+                      <Text style={styles.demateBadgeText}>{item.accountType}</Text>
                     </View>
-
-                    <TouchableOpacity
-                      style={{ padding: 6, marginLeft: 6 }}
-                      onPress={() => shareStatus(item, res)}
-                    >
-                      <Ionicons name="share-social-outline" size={16} color="#0284C7" />
-                    </TouchableOpacity>
-                  </View>
+                  ) : <View style={{ height: 20 }} />}
+                  <TouchableOpacity onPress={() => deleteAccount(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="trash-outline" size={20} color="#F87171" />
+                  </TouchableOpacity>
                 </View>
-              );
-            }}
+              </View>
+            )}
           />
-        </View>
-      )}
+        )}
 
-      {/* BOTTOM NAVBAR */}
-      <View style={[styles.bottomNavbar, { backgroundColor: theme.headerBg, borderTopColor: theme.border }]}>
-        {[
-          { key: 'IPO', icon: 'stats-chart', label: 'Terminal' },
-          { key: 'Account', icon: 'wallet-outline', label: 'Vault' },
-          { key: 'Allotment', icon: 'shield-checkmark-outline', label: 'Allotment' }
-        ].map(nav => {
-          const isActive = activeTab === nav.key;
-          return (
-            <TouchableOpacity
-              key={nav.key}
-              style={styles.bottomNavBtn}
-              onPress={() => setActiveTab(nav.key)}
-            >
-              <Ionicons
-                name={nav.icon}
-                size={20}
-                color={isActive ? BRAND_COLOR : theme.textSub}
-              />
-              <Text style={[styles.bottomNavLabel, { color: theme.textSub }, isActive && { color: BRAND_COLOR }]}>
-                {nav.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+        {/* ===================== ALLOTMENT SCANNER ===================== */}
+        {activeTab === 'Allotment' && (
+          <FlatList
+            data={accounts}
+            keyExtractor={item => item.id}
+            renderItem={renderAccountResult}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+            ListHeaderComponent={
+              <View>
+                <View style={styles.pageTitleRow}>
+                  <Text style={[styles.pageTitle, { color: theme.textMain }]}>Allotment Scanner</Text>
+                  <TouchableOpacity onPress={() => setActiveTab('IPO')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Ionicons name="close-circle-outline" size={28} color={theme.textSub} />
+                  </TouchableOpacity>
+                </View>
 
-      {/* SETTINGS MODAL */}
-      <Modal visible={settingsModalOpen} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg }]}>
-            <View style={styles.sheetTop}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Settings</Text>
-                <Text style={[styles.specKey, { color: theme.specKey }]}>APP PREFERENCES</Text>
+                <TouchableOpacity
+                  style={[styles.targetBox, { borderColor: theme.border, backgroundColor: theme.cardBg }]}
+                  onPress={() => setIpoPickerOpen(true)}
+                >
+                  <Text style={{ flex: 1, color: theme.textSub, fontSize: 15 }} numberOfLines={1}>
+                    Target:{' '}
+                    <Text style={{ color: theme.textMain, fontWeight: '600' }}>
+                      {selectedAllotmentIpo ? selectedAllotmentIpo.name : 'IPO select karo'}
+                    </Text>
+                  </Text>
+                  <Ionicons name="chevron-down" size={20} color={theme.textMain} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.scanBtn, { backgroundColor: theme.accent, opacity: checkingProgress ? 0.9 : 1 }]}
+                  activeOpacity={0.85}
+                  onPress={startBatchCheck}
+                  disabled={checkingProgress !== null}
+                >
+                  <Text style={styles.scanBtnTitle}>AUTO-SCAN ({accounts.length} ACCOUNTS)</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+                    {checkingProgress ? <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} /> : null}
+                    <Text style={styles.scanBtnSub}>{checkingProgress || 'Tap to scan all accounts'}</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <Text style={[styles.scanHint, { color: theme.textSub }]}>
+                  Har account registrar ki site par khud check hota hai (captcha ke liye max {MAX_SCAN_ROUNDS} baar retry).
+                </Text>
+                {selectedAllotmentIpo && (
+                  <TouchableOpacity style={styles.manualLink} onPress={() => openRegistrarSite(selectedAllotmentIpo)}>
+                    <Ionicons name="open-outline" size={14} color={theme.accentText} />
+                    <Text style={[styles.manualLinkText, { color: theme.accentText }]}>
+                      Ya seedha registrar ki official site par check karo
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <TouchableOpacity onPress={() => setSettingsModalOpen(false)}>
-                <Ionicons name="close-circle" size={24} color={theme.textSub} />
+            }
+          />
+        )}
+
+        {/* ===================== BOTTOM TABS ===================== */}
+        <View style={[styles.bottomNav, { backgroundColor: theme.headerBg, borderTopColor: theme.border }]}>
+          {tabs.map(nav => {
+            const active = activeTab === nav.key;
+            return (
+              <TouchableOpacity key={nav.key} style={styles.bottomNavBtn} onPress={() => setActiveTab(nav.key)}>
+                {active && <View style={[styles.navIndicator, { backgroundColor: theme.accent }]} />}
+                <Text style={[styles.bottomNavLabel, { color: active ? theme.textMain : theme.textSub, fontWeight: active ? '700' : '500' }]}>
+                  {nav.label}
+                </Text>
               </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.subHeaderTitle, { color: theme.textMain }]}>Theme Appearance</Text>
-            
-            <TouchableOpacity
-              style={[
-                styles.themeOptionRow,
-                { backgroundColor: theme.innerBox, borderColor: isDarkMode ? BRAND_COLOR : theme.border }
-              ]}
-              onPress={() => setThemeMode('dark')}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="moon" size={20} color={BRAND_COLOR} style={{ marginRight: 12 }} />
-                <View>
-                  <Text style={[styles.themeOptionTitle, { color: theme.textMain }]}>Dark Mode (Terminal Pro)</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>Obsidian slate theme for low light</Text>
-                </View>
-              </View>
-              <Ionicons
-                name={isDarkMode ? "radio-button-on" : "radio-button-off"}
-                size={20}
-                color={isDarkMode ? BRAND_COLOR : theme.textSub}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.themeOptionRow,
-                { backgroundColor: theme.innerBox, borderColor: !isDarkMode ? BRAND_COLOR : theme.border, marginTop: 10 }
-              ]}
-              onPress={() => setThemeMode('light')}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="sunny" size={20} color="#F59E0B" style={{ marginRight: 12 }} />
-                <View>
-                  <Text style={[styles.themeOptionTitle, { color: theme.textMain }]}>Light Mode (Classic Clean)</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>Bright daylight readability</Text>
-                </View>
-              </View>
-              <Ionicons
-                name={!isDarkMode ? "radio-button-on" : "radio-button-off"}
-                size={20}
-                color={!isDarkMode ? BRAND_COLOR : theme.textSub}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.modalCloseBtn, { marginTop: 20, backgroundColor: BRAND_COLOR }]}
-              onPress={() => setSettingsModalOpen(false)}
-            >
-              <Text style={styles.primaryBtnText}>DONE</Text>
-            </TouchableOpacity>
-          </View>
+            );
+          })}
         </View>
+      </SafeAreaView>
+
+      {/* ===================== CARD REVERSE (FLIP) POPUP ===================== */}
+      <Modal visible={!!backItem} transparent animationType="fade" onRequestClose={closeBack}>
+        <TouchableOpacity activeOpacity={1} style={[styles.centerBackdrop, { backgroundColor: theme.backdrop }]} onPress={closeBack}>
+          {backItem && (() => {
+            const d = detailCache[backItem.id] || {};
+            const regName = d.registrar || (backItem.registrar !== 'Not available yet' ? backItem.registrar : null);
+            const cells = subCells(backItem);
+            const rows = [];
+            for (let i = 0; i < cells.length; i += 2) rows.push(cells.slice(i, i + 2));
+            const noSubYet = backItem.status === 'UPCOMING';
+            return (
+              <Animated.View
+                onStartShouldSetResponder={() => true}
+                style={[
+                  styles.backCard,
+                  {
+                    backgroundColor: theme.modalBg,
+                    borderColor: theme.border,
+                    opacity: flipAnim,
+                    transform: [
+                      { perspective: 900 },
+                      { rotateY: flipAnim.interpolate({ inputRange: [0, 1], outputRange: ['90deg', '0deg'] }) },
+                    ],
+                  },
+                ]}
+              >
+                <TouchableOpacity style={styles.backClose} onPress={closeBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Ionicons name="close-circle-outline" size={28} color={theme.textMain} />
+                </TouchableOpacity>
+
+                <View style={{ alignItems: 'center', marginTop: 4 }}>
+                  <CompanyLogo name={backItem.name} size={80} />
+                  <Text style={[styles.backName, { color: theme.textMain }]}>{backItem.name}</Text>
+                </View>
+
+                <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+                <Text style={[styles.backSection, { color: theme.textSub }]}>LIVE SUBSCRIPTION</Text>
+                {noSubYet ? (
+                  <Text style={{ color: theme.textSub, fontSize: 13, marginTop: 4 }}>Subscription IPO khulne ke baad shuru hogi.</Text>
+                ) : (
+                  rows.map((row, idx) => (
+                    <View key={idx} style={styles.subRow}>
+                      {row.map(([label, val]) => (
+                        <Text key={label} style={[styles.subCell, { color: theme.textSub }]} numberOfLines={1}>
+                          {label}:{' '}
+                          <Text style={{ color: label === 'TOTAL' ? theme.good : theme.textMain, fontWeight: '700' }}>
+                            {val && val !== 'N/A' ? val : '--'}
+                          </Text>
+                        </Text>
+                      ))}
+                    </View>
+                  ))
+                )}
+
+                <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+                <Text style={[styles.backSection, { color: theme.textSub }]}>REGISTRAR & LEAD MANAGER</Text>
+                <Text style={[styles.backLine, { color: theme.textMain }]}>
+                  {regName || (d.loaded ? 'Registrar abhi pata nahi' : 'Loading...')}
+                </Text>
+                <Text style={[styles.backLine, { color: theme.textMain, marginTop: 6 }]}>
+                  {d.lead_managers || (d.loaded ? 'Lead manager abhi pata nahi' : '')}
+                </Text>
+              </Animated.View>
+            );
+          })()}
+        </TouchableOpacity>
       </Modal>
 
-      {/* NOTIFICATIONS MODAL */}
-      <Modal visible={notifModalOpen} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg }]}>
-            <View style={styles.sheetTop}>
+      {/* ===================== NOTIFICATIONS ===================== */}
+      <Modal visible={notifModalOpen} transparent animationType="slide" onRequestClose={() => setNotifModalOpen(false)}>
+        <View style={[styles.sheetBackdrop, { backgroundColor: theme.backdrop }]}>
+          <View style={[styles.sheet, { backgroundColor: theme.modalBg, borderColor: theme.border }]}>
+            <View style={styles.sheetHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Notifications</Text>
-                <Text style={[styles.specKey, { color: theme.specKey }]}>NEW IPOS & GMP UPDATES</Text>
+                <Text style={[styles.sheetSub, { color: theme.textSub }]}>NEW IPOS, GMP & ALLOTMENT UPDATES</Text>
               </View>
               <TouchableOpacity onPress={() => setNotifModalOpen(false)}>
-                <Ionicons name="close-circle" size={24} color={theme.textSub} />
+                <Ionicons name="close-circle" size={26} color={theme.textSub} />
               </TouchableOpacity>
             </View>
-
             <FlatList
               data={notifications}
               keyExtractor={(item, idx) => `${item.ipo_id}-${item.time}-${idx}`}
-              style={{ maxHeight: 450 }}
+              style={{ maxHeight: 460 }}
               ListEmptyComponent={
-                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 24 }}>
-                  Koi notification abhi tak nahi hai
-                </Text>
+                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 24 }}>Koi notification abhi tak nahi hai</Text>
               }
               renderItem={({ item }) => (
-                <View style={[styles.pickerRow, { borderBottomColor: theme.border }]}>
-                  <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.message}</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>
+                <View style={[styles.listRow, { borderBottomColor: theme.border }]}>
+                  <Text style={[styles.listRowTitle, { color: theme.textMain }]}>{item.message}</Text>
+                  <Text style={[styles.listRowSub, { color: theme.textSub }]}>
                     {new Date(item.time).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                   </Text>
                 </View>
@@ -1037,29 +1093,27 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* SEARCH MODAL */}
-      <Modal visible={searchModalOpen} transparent animationType="fade">
-        <View style={styles.searchModalBackdrop}>
-          <View style={[styles.searchBox, { backgroundColor: theme.cardBg }]}>
-            <View style={styles.sheetTop}>
+      {/* ===================== SEARCH (top se khulta hai) ===================== */}
+      <Modal visible={searchModalOpen} transparent animationType="fade" onRequestClose={() => { setSearchModalOpen(false); setSearchQuery(''); }}>
+        <View style={[styles.searchBackdrop, { backgroundColor: theme.backdrop }]}>
+          <View style={[styles.searchBox, { backgroundColor: theme.modalBg, borderColor: theme.border }]}>
+            <View style={styles.sheetHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Search IPOs</Text>
-                <Text style={[styles.specKey, { color: theme.specKey }]}>SEARCH BY COMPANY NAME</Text>
+                <Text style={[styles.sheetSub, { color: theme.textSub }]}>COMPANY KA NAAM LIKHO</Text>
               </View>
               <TouchableOpacity onPress={() => { setSearchModalOpen(false); setSearchQuery(''); }}>
-                <Ionicons name="close-circle" size={24} color={theme.textSub} />
+                <Ionicons name="close-circle" size={26} color={theme.textSub} />
               </TouchableOpacity>
             </View>
-
             <TextInput
               placeholder="e.g. Moneyview, Orient Cables..."
               placeholderTextColor={theme.textSub}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoFocus
-              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain, marginTop: 10 }]}
+              style={[styles.input, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
             />
-
             <FlatList
               data={searchResults}
               keyExtractor={item => item.id}
@@ -1072,8 +1126,9 @@ export default function App() {
               }
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={[styles.pickerRow, { borderBottomColor: theme.border }]}
+                  style={[styles.listRow, { borderBottomColor: theme.border }]}
                   onPress={() => {
+                    setActiveTab('IPO');
                     setStatusFilter(item.status);
                     setCategoryFilter('ALL');
                     setHighlightedIpoId(item.id);
@@ -1081,8 +1136,8 @@ export default function App() {
                     setSearchQuery('');
                   }}
                 >
-                  <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.name}</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status} • {item.category}</Text>
+                  <Text style={[styles.listRowTitle, { color: theme.textMain }]}>{item.name}</Text>
+                  <Text style={[styles.listRowSub, { color: theme.textSub }]}>{item.status} • {item.category}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -1090,19 +1145,85 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* ADD ACCOUNT MODAL */}
-      <Modal visible={accountModalOpen} transparent animationType="fade">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.addAccountModalCard, { backgroundColor: theme.cardBg }]}>
-            <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Add Family PAN</Text>
-            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 12 }]}>SECURE LOCAL STORAGE</Text>
+      {/* ===================== SETTINGS ===================== */}
+      <Modal visible={settingsModalOpen} transparent animationType="slide" onRequestClose={() => setSettingsModalOpen(false)}>
+        <View style={[styles.sheetBackdrop, { backgroundColor: theme.backdrop }]}>
+          <View style={[styles.sheet, { backgroundColor: theme.modalBg, borderColor: theme.border, maxHeight: '88%' }]}>
+            <View style={styles.sheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Settings</Text>
+                <Text style={[styles.sheetSub, { color: theme.textSub }]}>APP PREFERENCES</Text>
+              </View>
+              <TouchableOpacity onPress={() => setSettingsModalOpen(false)}>
+                <Ionicons name="close-circle" size={26} color={theme.textSub} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={[styles.settingsHeading, { color: theme.textMain }]}>Theme</Text>
+              {[
+                { mode: 'dark', icon: 'moon', title: 'Dark Mode', sub: 'Low light ke liye', active: isDarkMode, color: theme.accentText },
+                { mode: 'light', icon: 'sunny', title: 'Light Mode', sub: 'Din ki roshni ke liye', active: !isDarkMode, color: '#F59E0B' },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.mode}
+                  style={[styles.themeRow, { backgroundColor: theme.innerBox, borderColor: opt.active ? theme.accent : theme.border }]}
+                  onPress={() => setThemeMode(opt.mode)}
+                >
+                  <Ionicons name={opt.icon} size={20} color={opt.color} style={{ marginRight: 12 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.textMain, fontWeight: '700', fontSize: 14 }}>{opt.title}</Text>
+                    <Text style={{ color: theme.textSub, fontSize: 11, marginTop: 2 }}>{opt.sub}</Text>
+                  </View>
+                  <Ionicons name={opt.active ? 'radio-button-on' : 'radio-button-off'} size={20} color={opt.active ? theme.accent : theme.textSub} />
+                </TouchableOpacity>
+              ))}
+
+              <Text style={[styles.settingsHeading, { color: theme.textMain, marginTop: 20 }]}>Phone Notifications</Text>
+              <View style={[styles.pushBox, { backgroundColor: theme.innerBox, borderColor: pushStatus.ok ? '#22C55E' : theme.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <Ionicons
+                    name={pushStatus.ok === null ? 'time-outline' : pushStatus.ok ? 'checkmark-circle' : 'alert-circle'}
+                    size={20}
+                    color={pushStatus.ok === null ? theme.textSub : pushStatus.ok ? '#22C55E' : '#F59E0B'}
+                    style={{ marginRight: 10, marginTop: 1 }}
+                  />
+                  <Text style={{ flex: 1, color: theme.textMain, fontSize: 13, lineHeight: 18 }}>{pushStatus.msg}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: 12 }}>
+                  <TouchableOpacity style={[styles.smallBtn, { borderColor: theme.accent }]} onPress={registerForPushNotifications}>
+                    <Text style={{ color: theme.accentText, fontWeight: '700', fontSize: 12 }}>Retry setup</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.smallBtn, { borderColor: theme.accent, marginLeft: 10 }]} onPress={sendTestPush}>
+                    <Text style={{ color: theme.accentText, fontWeight: '700', fontSize: 12 }}>Send test push</Text>
+                  </TouchableOpacity>
+                </View>
+                {pushStatus.ok === false && /firebase|fcm/i.test(pushStatus.msg) && (
+                  <Text style={{ color: theme.textSub, fontSize: 11, marginTop: 12, lineHeight: 16 }}>
+                    Firebase setup: 1) console.firebase.google.com me project banao → Android app add karo (package: com.gautambabariya.ipogmptracker) →
+                    google-services.json download karo. 2) Wo file app folder me rakho aur app.json me android.googleServicesFile set karo.
+                    3) Terminal: eas credentials → Android → Google Service Account (FCM V1) upload. 4) Phir naya eas build.
+                  </Text>
+                )}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ===================== ADD PAN ===================== */}
+      <Modal visible={accountModalOpen} transparent animationType="fade" onRequestClose={() => setAccountModalOpen(false)}>
+        <View style={[styles.centerBackdrop, { backgroundColor: theme.backdrop }]}>
+          <View style={[styles.formCard, { backgroundColor: theme.modalBg, borderColor: theme.border }]}>
+            <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Add Family Account</Text>
+            <Text style={[styles.sheetSub, { color: theme.textSub, marginBottom: 12 }]}>VAULT ME NAYA PAN JODO</Text>
 
             <TextInput
-              placeholder="Full Name (e.g. GAUTAM BABARIYA)"
+              placeholder="Account Holder Name"
               placeholderTextColor={theme.textSub}
               value={newName}
               onChangeText={setNewName}
-              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
+              style={[styles.input, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
             />
             <TextInput
               placeholder="PAN Number (e.g. GSXPB6123C)"
@@ -1110,24 +1231,21 @@ export default function App() {
               value={newPan}
               onChangeText={setNewPan}
               autoCapitalize="characters"
-              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
+              maxLength={10}
+              style={[styles.input, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
             />
 
-            <Text style={[styles.specKey, { color: theme.specKey, marginBottom: 6 }]}>DEMAT ACCOUNT TYPE (OPTIONAL)</Text>
+            <Text style={[styles.sheetSub, { color: theme.textSub, marginBottom: 6 }]}>DEMAT ACCOUNT TYPE (OPTIONAL)</Text>
             <View style={{ flexDirection: 'row', marginBottom: 10 }}>
               {['CDSL', 'NSDL'].map(type => {
-                const isSelected = newAccountType === type;
+                const active = newAccountType === type;
                 return (
                   <TouchableOpacity
                     key={type}
-                    style={[
-                      styles.chip, 
-                      { backgroundColor: theme.innerBox, marginRight: 8 }, 
-                      isSelected && { borderWidth: 1, borderColor: BRAND_COLOR }
-                    ]}
+                    style={[styles.chip, { marginRight: 8, borderColor: active ? theme.accent : theme.border, backgroundColor: active ? theme.accentSoft : 'transparent' }]}
                     onPress={() => setNewAccountType(type)}
                   >
-                    <Text style={[styles.chipText, { color: theme.textSub }, isSelected && { color: BRAND_COLOR }]}>{type}</Text>
+                    <Text style={[styles.chipText, { color: active ? theme.accentText : theme.textMain }]}>{type}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -1138,111 +1256,120 @@ export default function App() {
               placeholderTextColor={theme.textSub}
               value={newClientId}
               onChangeText={setNewClientId}
-              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
+              style={[styles.input, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
             />
             <TextInput
-              placeholder="UPI ID (PhonePe, GPay, BHIM etc.) (optional)"
+              placeholder="UPI ID (optional)"
               placeholderTextColor={theme.textSub}
               value={newUpiId}
               onChangeText={setNewUpiId}
               autoCapitalize="none"
-              style={[styles.darkInput, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
+              style={[styles.input, { backgroundColor: theme.innerBox, borderColor: theme.border, color: theme.textMain }]}
             />
 
-            <View style={{ flexDirection: 'row', marginTop: 12 }}>
-              <TouchableOpacity
-                style={[styles.modalActionBtn, { backgroundColor: theme.innerBox, marginRight: 10 }]}
-                onPress={() => setAccountModalOpen(false)}
-              >
-                <Text style={{ color: theme.textSub, fontWeight: 'bold' }}>Cancel</Text>
+            <View style={{ flexDirection: 'row', marginTop: 6 }}>
+              <TouchableOpacity style={[styles.formBtn, { backgroundColor: theme.innerBox, marginRight: 10 }]} onPress={() => setAccountModalOpen(false)}>
+                <Text style={{ color: theme.textSub, fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalActionBtn, { backgroundColor: BRAND_COLOR }]}
-                onPress={saveAccount}
-              >
-                <Text style={styles.primaryBtnText}>Save Account</Text>
+              <TouchableOpacity style={[styles.formBtn, { backgroundColor: theme.accent }]} onPress={saveAccount}>
+                <Text style={{ color: '#fff', fontWeight: '800' }}>Save PAN</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* SELECT IPO FOR ALLOTMENT MODAL */}
-      <Modal visible={ipoPickerOpen} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheetBox, { backgroundColor: theme.cardBg, maxHeight: '75%' }]}>
-            <Text style={[styles.subHeaderTitle, { color: theme.textMain }]}>Select Target IPO</Text>
+      {/* ===================== TARGET IPO PICKER ===================== */}
+      <Modal visible={ipoPickerOpen} transparent animationType="slide" onRequestClose={() => setIpoPickerOpen(false)}>
+        <View style={[styles.sheetBackdrop, { backgroundColor: theme.backdrop }]}>
+          <View style={[styles.sheet, { backgroundColor: theme.modalBg, borderColor: theme.border }]}>
+            <View style={styles.sheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetTitle, { color: theme.textMain }]}>Select Target IPO</Text>
+                <Text style={[styles.sheetSub, { color: theme.textSub }]}>SIRF WO IPO JINKA ALLOTMENT AA CHUKA HAI</Text>
+              </View>
+              <TouchableOpacity onPress={() => setIpoPickerOpen(false)}>
+                <Ionicons name="close-circle" size={26} color={theme.textSub} />
+              </TouchableOpacity>
+            </View>
             <FlatList
               data={allotmentEligibleIpos}
               keyExtractor={item => item.id}
               style={{ maxHeight: 420 }}
+              ListEmptyComponent={
+                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 20 }}>Abhi kisi IPO ka allotment declare nahi hua</Text>
+              }
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={[styles.pickerRow, { borderBottomColor: theme.border }]}
+                  style={[styles.listRow, { borderBottomColor: theme.border }]}
                   onPress={() => {
                     setSelectedAllotmentIpo(item);
                     setIpoPickerOpen(false);
                     setAllotmentResults({});
                   }}
                 >
-                  <Text style={[styles.pickerTitle, { color: theme.textMain }]}>{item.name}</Text>
-                  <Text style={[styles.specKey, { color: theme.specKey }]}>{item.status} | Allotment: {item.allotment_date}</Text>
+                  <Text style={[styles.listRowTitle, { color: theme.textMain }]}>{item.name}</Text>
+                  <Text style={[styles.listRowSub, { color: theme.textSub }]}>Allotment: {item.allotment_date}</Text>
                 </TouchableOpacity>
               )}
-              ListEmptyComponent={
-                <Text style={{ color: theme.textSub, textAlign: 'center', padding: 20 }}>
-                  No IPO with declared allotment yet
-                </Text>
-              }
             />
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+
+      {/* ===================== SPLASH (user ki image, ~2 sec) ===================== */}
+      {showIntro && (
+        <Animated.View pointerEvents="auto" style={[StyleSheet.absoluteFill, { opacity: introOpacity, zIndex: 999, elevation: 999 }]}>
+          <Image source={require('./assets/splash.png')} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+const STATUS_TOP = Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 12;
+
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  introOverlay: {
-    backgroundColor: '#0B0F14',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  introLogo: { fontSize: 64, fontWeight: '900', letterSpacing: 2 },
-  introSub: { fontSize: 12, fontWeight: '700', color: '#6B7280', letterSpacing: 3, marginTop: 8 },
+  root: { flex: 1 },
+
+  // header
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    paddingTop: (Platform.OS === 'android' ? StatusBar.currentHeight || 24 : 12) + 12,
-    borderBottomWidth: 1
+    paddingBottom: 12,
+    paddingTop: STATUS_TOP + 14,
   },
-  radarIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+  brandRow: { flexDirection: 'row', alignItems: 'center' },
+  brandText: { fontSize: 30, fontWeight: '600', letterSpacing: 0.5 },
+  liveBar: {
+    width: 4,
+    height: 26,
+    borderRadius: 2,
+    marginLeft: 8,
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  topRight: { flexDirection: 'row', alignItems: 'center' },
+  iconBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
-    borderWidth: 1
-  },
-  radarDot: { width: 10, height: 10, borderRadius: 5 },
-  appName: { fontSize: 14, fontWeight: '900', letterSpacing: 1.5 },
-  topRightActions: { flexDirection: 'row', alignItems: 'center' },
-  iconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center'
+    marginLeft: 8,
   },
   notifBadge: {
     position: 'absolute',
-    top: -4,
-    right: -4,
+    top: -5,
+    right: -5,
     backgroundColor: '#EF4444',
     borderRadius: 9,
     minWidth: 18,
@@ -1252,234 +1379,149 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   notifBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  pillTabBar: {
+
+  // status tabs
+  pillTabs: {
     flexDirection: 'row',
-    paddingHorizontal: 14,
-    paddingVertical: 10
-  },
-  pillTabBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: 10,
-    marginHorizontal: 3
-  },
-  pillTabText: { fontSize: 11, fontWeight: '800' },
-  pillTabTextActive: { color: '#FFF' },
-  filterChipRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: 1
-  },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginRight: 8
-  },
-  chipText: { fontSize: 11, fontWeight: '700' },
-  centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  cardContainer: {
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
+    marginHorizontal: 16,
+    marginTop: 6,
+    padding: 3,
+    borderRadius: 24,
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 2,
+    borderColor: 'rgba(164,63,227,0.55)',
   },
-  cardHeader: {
+  pillTab: { flex: 1, paddingVertical: 10, borderRadius: 21, alignItems: 'center' },
+  pillTabText: { fontSize: 14, fontWeight: '700', letterSpacing: 0.6 },
+
+  // category chips
+  chipsRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginTop: 14, marginBottom: 10 },
+  chip: { paddingHorizontal: 15, paddingVertical: 7, borderRadius: 18, borderWidth: 1, marginRight: 8 },
+  chipText: { fontSize: 14, fontWeight: '500' },
+  countText: { marginLeft: 'auto', fontSize: 13 },
+
+  centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 40 },
+
+  // IPO card
+  card: { borderRadius: 18, borderWidth: 1, padding: 14, marginBottom: 14 },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start' },
+  cardTitleCol: { flex: 1, marginLeft: 12, marginRight: 8 },
+  catBadge: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, marginBottom: 5 },
+  catBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.6 },
+  cardName: { fontSize: 18, fontWeight: '700' },
+  dateRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+  dateText: { fontSize: 12.5, marginLeft: 6 },
+  flipBtn: { padding: 4 },
+
+  ticker: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10
-  },
-  logoAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
-  },
-  logoAvatarText: { color: '#fff', fontSize: 16, fontWeight: '900' },
-  cardTitle: { fontSize: 17, fontWeight: '800', letterSpacing: 0.2 },
-  flipIconBtn: { padding: 4, marginLeft: 8 },
-  cardBackOverlay: {
-    padding: 16,
-    borderRadius: 14,
-    zIndex: 10,
-  },
-  cardBackHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  cardDateRange: { fontSize: 11, marginTop: 3 },
-  tagBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  tagMain: { backgroundColor: '#1E3A8A' },
-  tagSme: { backgroundColor: '#854D0E' },
-  tagBadgeText: { fontSize: 10, fontWeight: '900', color: '#F8FAFC' },
-  gmpTerminalBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 10,
     borderWidth: 1,
-    marginBottom: 10
+    borderRadius: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 14,
   },
-  liveBlinkCircle: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  gmpTerminalLabel: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  lastHeardText: { fontSize: 10, marginTop: 2 },
-  gmpMainValue: { fontSize: 20, fontWeight: '900' },
-  gmpPctBadge: { fontSize: 10, fontWeight: '800' },
-  specGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8
-  },
-  specCol: { flex: 1 },
-  specKey: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
-  specVal: { fontSize: 12, fontWeight: '800', marginTop: 2 },
-  profitBanner: {
-    flexDirection: 'row',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8
-  },
-  profitAmount: { fontSize: 14, fontWeight: '900', marginTop: 2 },
-  closedPerformanceBox: {
-    flexDirection: 'row',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8
-  },
-  brandHighlight: { fontSize: 12, fontWeight: '900', marginTop: 2 },
-  timelineRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10
-  },
-  timelineText: { fontSize: 10 },
-  actionRow: { flexDirection: 'row', alignItems: 'center' },
-  primaryActionBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    elevation: 2,
-  },
-  primaryBtnText: { fontSize: 12, fontWeight: '900', color: '#FFF', letterSpacing: 0.6 },
-  accountHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14
-  },
-  accountTitle: { fontSize: 16, fontWeight: '900' },
-  accountSub: { fontSize: 11 },
-  addPanBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8
-  },
-  addPanText: { fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
-  accountCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 8,
-    borderWidth: 1
-  },
-  panHolderName: { fontSize: 13, fontWeight: '800' },
-  panNumber: { fontSize: 11, marginTop: 2 },
-  deleteBtn: { padding: 6 },
-  ipoSelectBtn: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 10,
-    borderWidth: 1
-  },
-  selectedIpoName: { fontSize: 14, fontWeight: '800', marginTop: 2 },
-  batchTriggerBtn: {
-    paddingVertical: 13,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 12,
-    elevation: 2,
-  },
-  registrarLinkBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    marginBottom: 10,
-  },
-  registrarLinkText: { color: '#3B82F6', fontSize: 12, fontWeight: '700', marginLeft: 6 },
-  allotCardItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 8,
-    borderWidth: 1
-  },
-  statusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  statusNotApplied: { backgroundColor: '#1E293B' },
-  statusPillText: { fontSize: 11, fontWeight: '800' },
-  bottomNavbar: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    paddingVertical: 8
-  },
-  bottomNavBtn: { flex: 1, alignItems: 'center' },
-  bottomNavLabel: { fontSize: 10, marginTop: 2, fontWeight: '700' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
-  searchModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-start' },
+  tickerLabelRow: { flexDirection: 'row', alignItems: 'center' },
+  tickerDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7 },
+  tickerLabel: { fontSize: 15, fontWeight: '500', letterSpacing: 0.3 },
+  tickerUpdated: { fontSize: 11.5, marginTop: 4 },
+  tickerValue: { fontSize: 24, fontWeight: '700' },
+  tickerGain: { fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+
+  specRow: { flexDirection: 'row', marginTop: 14 },
+  specCol: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
+  specLabel: { fontSize: 11, letterSpacing: 0.3 },
+  specValue: { fontSize: 16, fontWeight: '700', marginTop: 4 },
+
+  profitRow: { flexDirection: 'row', marginTop: 14 },
+  profitBox: { flex: 1, borderWidth: 1, borderRadius: 11, paddingVertical: 10, alignItems: 'center', marginHorizontal: 4 },
+  profitLabel: { fontSize: 10.5, letterSpacing: 0.3 },
+  profitValue: { fontSize: 19, fontWeight: '800', marginTop: 4 },
+
+  footerRow: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', marginTop: 14 },
+  footerTxt: { fontSize: 11.5 },
+  footerVal: { fontWeight: '700' },
+
+  perfBox: { flexDirection: 'row', borderWidth: 1, borderRadius: 11, marginTop: 14, paddingVertical: 10 },
+  perfCol: { flex: 1, alignItems: 'center', paddingHorizontal: 6 },
+  perfLabel: { fontSize: 11.5, letterSpacing: 0.3 },
+  perfValue: { fontSize: 18, fontWeight: '800', marginTop: 4 },
+
+  primaryBtn: { borderRadius: 26, paddingVertical: 15, alignItems: 'center', marginTop: 14 },
+  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.6 },
+  registrarHint: { fontSize: 11, textAlign: 'center', marginTop: 8 },
+
+  // pages (vault / scanner)
+  pageTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
+  pageTitle: { fontSize: 28, fontWeight: '700' },
+  pageSub: { fontSize: 15, marginTop: 12, marginBottom: 14 },
+  outlineBtn: { borderWidth: 1, borderRadius: 13, paddingHorizontal: 20, paddingVertical: 11 },
+  outlineBtnText: { fontSize: 15, fontWeight: '600' },
+
+  vaultCard: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 12 },
+  vaultName: { fontSize: 16, fontWeight: '600', letterSpacing: 0.3 },
+  vaultPan: { fontSize: 13.5, marginTop: 3 },
+  demateBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 5 },
+  demateBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+
+  targetBox: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 15, marginTop: 18 },
+  scanBtn: { borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginTop: 14 },
+  scanBtnTitle: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.4 },
+  scanBtnSub: { color: 'rgba(255,255,255,0.92)', fontSize: 13 },
+  scanHint: { fontSize: 11.5, textAlign: 'center', marginTop: 10, lineHeight: 16 },
+  manualLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, marginBottom: 6 },
+  manualLinkText: { fontSize: 12.5, fontWeight: '600', marginLeft: 6 },
+
+  resultCard: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1, padding: 14, marginTop: 12 },
+  resultName: { fontSize: 16, fontWeight: '600', letterSpacing: 0.3 },
+  resultNote: { fontSize: 11, marginTop: 6 },
+  statusPill: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, marginTop: 8 },
+  statusPillText: { fontSize: 12.5, fontWeight: '800', letterSpacing: 0.4 },
+  shareBtn: { flexDirection: 'row', alignItems: 'center', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginTop: 8 },
+  shareBtnText: { fontSize: 13.5, fontWeight: '600', marginLeft: 6 },
+
+  // bottom tabs
+  bottomNav: { flexDirection: 'row', borderTopWidth: 1, paddingBottom: Platform.OS === 'android' ? 26 : 18 },
+  bottomNavBtn: { flex: 1, alignItems: 'center', paddingTop: 16, paddingBottom: 6 },
+  navIndicator: { position: 'absolute', top: -1, left: '12%', right: '12%', height: 3, borderRadius: 2 },
+  bottomNavLabel: { fontSize: 15 },
+
+  // popups
+  centerBackdrop: { flex: 1, justifyContent: 'center', paddingHorizontal: 18 },
+  backCard: { borderRadius: 20, borderWidth: 1, padding: 20 },
+  backClose: { position: 'absolute', top: 12, right: 12, zIndex: 5 },
+  backName: { fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 12 },
+  divider: { height: 1, marginVertical: 16 },
+  backSection: { fontSize: 14, letterSpacing: 0.6, marginBottom: 8 },
+  subRow: { flexDirection: 'row', marginTop: 8 },
+  subCell: { flex: 1, fontSize: 16 },
+  backLine: { fontSize: 15, fontWeight: '500' },
+
+  sheetBackdrop: { flex: 1, justifyContent: 'flex-end' },
+  sheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, borderWidth: 1, padding: 18, paddingBottom: 28 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  sheetTitle: { fontSize: 19, fontWeight: '800' },
+  sheetSub: { fontSize: 11, letterSpacing: 0.6, marginTop: 2 },
+  listRow: { paddingVertical: 13, borderBottomWidth: 1 },
+  listRowTitle: { fontSize: 15, fontWeight: '600' },
+  listRowSub: { fontSize: 12, marginTop: 3 },
+
+  searchBackdrop: { flex: 1, justifyContent: 'flex-start' },
   searchBox: {
-    marginTop: (Platform.OS === 'android' ? StatusBar.currentHeight || 24 : 12) + 68,
+    marginTop: STATUS_TOP + 70,
     marginHorizontal: 12,
-    borderRadius: 14,
+    borderRadius: 18,
+    borderWidth: 1,
     padding: 16,
-    maxHeight: '70%',
+    maxHeight: '75%',
   },
-  sheetBox: { borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, maxHeight: '80%' },
-  sheetTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sheetTitle: { fontSize: 16, fontWeight: '900' },
-  subHeaderTitle: { fontSize: 12, fontWeight: '800', marginTop: 10, marginBottom: 8 },
-  themeOptionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1.5
-  },
-  themeOptionTitle: { fontSize: 13, fontWeight: '800' },
-  darkTableRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 8, borderTopWidth: 1 },
-  tableTxt: { fontSize: 12 },
-  tableTxtBold: { fontSize: 12, fontWeight: 'bold' },
-  modalCloseBtn: { paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 8 },
-  addAccountModalCard: { borderRadius: 14, padding: 18, marginHorizontal: 20, marginBottom: 100 },
-  darkInput: { borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 13 },
-  modalActionBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
-  pickerRow: { paddingVertical: 12, borderBottomWidth: 1 },
-  pickerTitle: { fontSize: 14, fontWeight: '800' }
+  input: { borderWidth: 1, borderRadius: 11, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, marginBottom: 10 },
+
+  settingsHeading: { fontSize: 14, fontWeight: '800', marginBottom: 10, marginTop: 4 },
+  themeRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 13, padding: 14, marginBottom: 10 },
+  pushBox: { borderWidth: 1, borderRadius: 13, padding: 14 },
+  smallBtn: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+
+  formCard: { borderRadius: 20, borderWidth: 1, padding: 18 },
+  formBtn: { flex: 1, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
 });
